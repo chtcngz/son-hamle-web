@@ -1,6 +1,6 @@
 "use strict";
 const dirs = {Up:[-1,0],Right:[0,1],Down:[1,0],Left:[0,-1]};
-const saveKey = "sonhamle-html-v2";
+const saveKey = "sonhamle-html-v3"; // v3: levels 6-40 replaced, old completion marks no longer apply
 const $ = id => document.getElementById(id);
 const key = (r,c) => `${r},${c}`;
 let levels = [], level, number = 1, state, history = [], progress;
@@ -82,7 +82,7 @@ $("restart").addEventListener("click",()=>{state=initialState();history=[];$("me
 $("next").addEventListener("click",()=>{if(number<40)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});
-fetch("levels.json").then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
+fetch("levels.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
   if(data.length!==40)throw Error("40 bölüm yüklenemedi");
   levels=data.map(l=>({...l,activeSet:new Set(l.activeCells.map(p=>key(p.row,p.column))),wallSet:new Set(l.walls.map(p=>key(p.row,p.column))),stars:l.stars.map(p=>[p.row,p.column]),start:[l.start.row,l.start.column]}));
   try{progress={...initialProgress(),...JSON.parse(localStorage.getItem(saveKey))};}catch{progress=initialProgress();}
