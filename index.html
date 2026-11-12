@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Son Hamle</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <p class="eyebrow">SON HAMLE</p>
+      <h1 id="level-title">Bölüm 1</h1>
+      <p id="counters">Yıldız: 0 · Hamle: 0</p>
+    </header>
+    <section id="game-view" aria-label="Oyun alanı">
+      <div id="board" class="board" aria-label="Tahta"></div>
+      <p id="message" class="message" role="status">Bir hücreye tıkla.</p>
+      <div class="actions">
+        <button id="undo" type="button">Geri Al</button>
+        <button id="restart" type="button">Yeniden Başlat</button>
+      </div>
+      <button id="next" class="primary" type="button" hidden>Sonraki Bölüm</button>
+    </section>
+    <section id="levels-view" hidden aria-label="Bölümler">
+      <div id="level-grid" class="level-grid"></div>
+      <button id="back" type="button">Oyuna Dön</button>
+    </section>
+    <button id="levels-toggle" class="outline" type="button">Bölümler</button>
+  </main>
+</body>
+</html>
