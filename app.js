@@ -3,14 +3,14 @@ const dirs = {Up:[-1,0],Right:[0,1],Down:[1,0],Left:[0,-1]};
 const saveKey = "sonhamle-html-v3"; // v3: levels 6-40 replaced, old completion marks no longer apply
 const $ = id => document.getElementById(id);
 const key = (r,c) => `${r},${c}`;
-let levels = [], level, number = 1, state, history = [], progress;
+let levels = [], level, number = 1, state, progress;
 const initialProgress = () => ({unlocked:1,current:1,completed:[]});
 
 function initialState(){return {position:[...level.start],closed:new Set(),stars:new Set(level.stars.map(([r,c])=>key(r,c))),moves:0};}
 function copyState(s){return {position:[...s.position],closed:new Set(s.closed),stars:new Set(s.stars),moves:s.moves};}
 function save(){localStorage.setItem(saveKey,JSON.stringify(progress));}
 function loadLevel(n){
-  number=n;level=levels[n-1];state=initialState();history=[];progress.current=n;save();
+  number=n;level=levels[n-1];state=initialState();progress.current=n;save();
   $("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;
   $("message").textContent="Bir hücreye tıkla; nokta o yönde son açık kareye kayar.";
   render();
@@ -29,11 +29,11 @@ function hasMove(s){return Object.keys(dirs).some(dir=>slide(s,dir)!==null);}
 function move(dir){
   if(!level||state.stars.size===0)return;
   const after=slide(state,dir);if(!after)return;
-  history.push(copyState(state));state=after;
+  state=after;
   if(state.stars.size===0){
     progress.completed=Array.from(new Set([...progress.completed,number]));progress.unlocked=Math.max(progress.unlocked,Math.min(40,number+1));save();
     $("message").textContent=number===40?"Prototip tamamlandı!":"Harika! Bütün yıldızlar toplandı.";
-  }else if(!hasMove(state))$("message").textContent="Çıkmaz! Geri Al ile başka yol dene.";
+  }else if(!hasMove(state))$("message").textContent="Çıkmaz! Yeniden Başlat ile başka yol dene.";
   else $("message").textContent="Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
   render();
 }
@@ -53,7 +53,6 @@ function render(){
     else if(state.stars.has(id)){const star=document.createElement("span");star.className="star";cell.append(star);cell.setAttribute("aria-label","Yıldız");}
     board.append(cell);
   }
-  $("undo").disabled=history.length===0;
   $("next").hidden=state.stars.size!==0||number===40;
 }
 function chooseDirection(r,c){
@@ -77,8 +76,7 @@ $("board").addEventListener("click",e=>{
   const dir=chooseDirection(Number(cell.dataset.row),Number(cell.dataset.col));if(dir)move(dir);
 });
 document.addEventListener("keydown",e=>{const dir={ArrowUp:"Up",ArrowRight:"Right",ArrowDown:"Down",ArrowLeft:"Left"}[e.key];if(dir){e.preventDefault();move(dir);}});
-$("undo").addEventListener("click",()=>{if(history.length){state=history.pop();$("message").textContent="Hamle geri alındı.";render();}});
-$("restart").addEventListener("click",()=>{state=initialState();history=[];$("message").textContent="Bölüm yeniden başladı.";render();});
+$("restart").addEventListener("click",()=>{state=initialState();$("message").textContent="Bölüm yeniden başladı.";render();});
 $("next").addEventListener("click",()=>{if(number<40)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});

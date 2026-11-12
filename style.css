@@ -14,7 +14,8 @@ button{font:inherit;cursor:pointer}
 .player{display:block;width:48%;aspect-ratio:1;border-radius:50%;background:#173b69;box-shadow:inset -5px -6px 0 #0e2b4f}
 .star{display:block;width:57%;aspect-ratio:1;background:#f7ad24;clip-path:polygon(50% 0%,61% 35%,98% 35%,68% 57%,79% 94%,50% 72%,21% 94%,32% 57%,2% 35%,39% 35%)}
 .message{min-height:2.6em;text-align:center;margin:0;color:#dce9f3;display:grid;place-items:center;font-size:clamp(.94rem,2.5vw,1.12rem)}
-.actions{width:min(100%,510px);display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.actions{width:min(100%,510px)}
+.actions button{width:100%}
 .actions button,#next,#levels-toggle,#back{border:1px solid #6189ad;border-radius:10px;padding:12px 14px;background:#17314f;color:#fff;min-height:48px}
 .actions button:hover,#levels-toggle:hover,#back:hover{background:#24496f}
 #next{width:min(100%,510px);background:#e4a325;color:#162235;border-color:#e4a325;font-weight:700}
