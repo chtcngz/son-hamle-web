@@ -33,6 +33,7 @@ button{font:inherit;cursor:pointer}
 #next{width:min(100%,510px);background:#e4a325;color:#162235;border-color:#e4a325;font-weight:700}
 #levels-toggle{margin-top:auto;width:min(100%,510px)}
 .level-grid{width:min(100%,510px);display:grid;grid-template-columns:repeat(5,1fr);gap:7px}
+.block-title{grid-column:1/-1;margin:6px 0 0;color:#94abc3;font-size:.78rem;letter-spacing:.12em;text-transform:uppercase}
 .level-grid button{border:1px solid #53718d;border-radius:7px;background:#19324e;color:#fff;min-height:47px}
 .level-grid button.current{border-color:#e4a325}.level-grid button.complete{background:#25584e}.level-grid button:disabled{opacity:.4;cursor:not-allowed}
 #back{width:min(100%,510px)}
