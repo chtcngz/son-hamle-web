@@ -10,10 +10,11 @@
 //   node tools/generate.js --seed 5           başka bir rastgele tohumla dene (varsayılan 1)
 //   node tools/generate.js --pool eski.json   önce bu dosyadaki bölümlerden uyanı yerleştir
 //
-// Arama: rastgele bir tahtadan başlanır; yıldız/duvar/başlangıç/geçit küçük adımlarla oynatılır ve
+// Arama: rastgele bir tahtadan başlanır; yıldız/duvar/başlangıç/geçit/ok küçük adımlarla oynatılır ve
 // hedef zorluğa yaklaştıran adımlar tutulur. Hedefe oturan adaylar arasından en "derli toplu" olan seçilir.
+// Her bloğun son 3 bölümü için ayrıca "sıkı" olma şartı aranır (tek ya da iki çözüm, uzun çözüm, derin tuzak).
 const {LEVELS_FILE,readLevels,writeLevels,blockFeature,inspect,starText}=require("./levels-file.js");
-const Difficulty=require("../difficulty.js");
+const Engine=require("../engine.js"),Difficulty=require("../difficulty.js");
 
 // Blok içindeki sıraya göre tahta boyu: ilk bölümler küçük, son bölümler büyük tahtada.
 const SIZE_BY_SLOT=[3,3,3,3,4,4,4,4,5,5,5,5,5,5,6,6,6,6,6,6];
@@ -24,19 +25,28 @@ const WANTED=60;           // bir yuva için kaç uygun aday toplanınca seçim 
 const BUDGET=3000;         // bir yuva için en çok kaç tahta denenir (bulunamazsa iki kez katlanır)
 const MIN_USED_CELLS=0.75; // üretilen bölümde karelerin en az bu kadarı bir çözümde kullanılmalı
 const HALF_BIN=(Difficulty.RAW_FIVE_STARS-Difficulty.RAW_ONE_STAR)/4*Difficulty.STEP/2;
+// Blok sonu: her bloğun son 3 bölümü yıldız hedefinin yanında "sıkı" da olmalı (bkz. tight).
+const FINALE_SLOTS=3,FINALE_MAX_SOLUTIONS=2,FINALE_MOVES=[12,16],FINALE_WANTED=12;
 
 // Özelliğe özgü kısımlar. Yeni özellik eklemek için buraya bir giriş yazılır.
-//   cells      özelliğin tahtada kapladığı kare sayısı
-//   apply      ayrılan kareleri bölüm verisine işler
-//   essential  özellik gerçekten gerekli mi (yoksa bölüm çözülemiyor mu)
+//   cells      tahta boyuna göre özelliğin kaplayacağı kare sayısı aralığı [en az, en çok]
+//   linked     kareler birbirine bağlı mı (geçidin iki ucu gibi)
+//   directed   her karenin bir yönü var mı (ok gibi)
+//   apply      ayrılan kareleri (ve yönlerini) bölüm verisine işler
+//   flaw       özelliğe özgü kusur varsa nedeni, yoksa null
 const FEATURES={
   portal:{
-    rulesVersion:3,cells:2,
+    rulesVersion:3,cells:()=>[2,2],linked:true,
     apply(level,points){level.portals=points;},
-    // Geçit kareleri duvar olsaydı bölüm çözülemiyorsa her çözüm geçitten geçiyor demektir.
-    essential(rawLevel){
-      const {analysis}=inspect({...rawLevel,portals:[],walls:[...rawLevel.walls,...rawLevel.portals]},{maxStates:SEARCH_STATES});
-      return analysis!==null&&!analysis.solvable;
+    flaw:()=>null,
+  },
+  arrow:{
+    rulesVersion:4,cells:size=>({3:[1,1],4:[1,2],5:[1,3],6:[2,4]})[size],directed:true,
+    apply(level,points,directions){level.arrows=points.map((point,i)=>({...point,direction:Engine.dirNames[directions[i]]}));},
+    flaw(rawLevel,analysis){
+      if(analysis.loops)return "oklar noktayı döngüye sokuyor";
+      if(rawLevel.arrows.some(arrow=>!analysis.used.has(Engine.pointKey(arrow))))return "hiçbir çözümde kullanılmayan ok var";
+      return null;
     },
   },
 };
@@ -50,7 +60,7 @@ function hash(text){let h=2166136261;for(let i=0;i<text.length;i++)h=Math.imul(h
 const between=(random,low,high)=>low+Math.floor(random()*(high-low+1));
 const choose=(random,list)=>list[Math.floor(random()*list.length)];
 const idealMoves=rating=>2.6*rating-1; // 1★ ≈ 1-2 hamle, 5★ ≈ 12 hamle
-const signature=rawLevel=>JSON.stringify([rawLevel.width,rawLevel.activeCells,rawLevel.walls,rawLevel.start,rawLevel.stars,rawLevel.portals??[]]);
+const signature=rawLevel=>JSON.stringify([rawLevel.width,rawLevel.activeCells,rawLevel.walls,rawLevel.start,rawLevel.stars,rawLevel.portals??[],rawLevel.arrows??[]]);
 // Tahtanın iskeleti (biçim + duvarlar). Aynı blokta iki bölüm aynı iskeleti paylaşmaz.
 const skeleton=(rawLevel,feature)=>JSON.stringify([feature,rawLevel.width,rawLevel.activeCells,rawLevel.walls]);
 
@@ -59,7 +69,7 @@ function toLevel(board,feature){
   const point=id=>({row:Math.floor(id/board.size),column:id%board.size}),sorted=ids=>[...ids].sort((a,b)=>a-b).map(point);
   const level={rulesVersion:feature?FEATURES[feature].rulesVersion:2,width:board.size,height:board.size,
     activeCells:sorted(board.active),start:point(board.start),walls:sorted(board.walls),stars:sorted(board.stars)};
-  if(feature)FEATURES[feature].apply(level,board.extra.map(point));
+  if(feature)FEATURES[feature].apply(level,board.extra.map(point),board.directions);
   return level;
 }
 // Açık kareler tek parça mı (geçidin iki ucu birbirine bağlı sayılır).
@@ -69,7 +79,7 @@ function connected(board){
     const id=queue.pop(),row=Math.floor(id/board.size),column=id%board.size,next=[];
     if(row>0)next.push(id-board.size);if(row<board.size-1)next.push(id+board.size);
     if(column>0)next.push(id-1);if(column<board.size-1)next.push(id+1);
-    const extraIndex=board.extra.indexOf(id);if(extraIndex>=0)next.push(...board.extra);
+    if(board.linked&&board.extra.includes(id))next.push(...board.extra);
     for(const other of next)if(freeSet.has(other)&&!seen.has(other)){seen.add(other);queue.push(other);}
   }
   return seen.size===free.length;
@@ -92,24 +102,33 @@ function randomBoard(random,size,feature){
     if(rows.size<size||columns.size<size)continue; // tahta kendi boyunu doldurmalı
     const cells=[...active],walls=new Set();
     for(let count=between(random,0,MAX_WALLS[size]);count>0;count--)walls.add(choose(random,cells));
-    const free=cells.filter(id=>!walls.has(id)),extraCount=feature?FEATURES[feature].cells:0;
+    const free=cells.filter(id=>!walls.has(id)),spec=feature?FEATURES[feature]:null;
+    const extraRange=spec?spec.cells(size):[0,0],extraCount=between(random,...extraRange);
     const starCount=between(random,...STARS_BY_SIZE[size]);
     if(free.length<starCount+extraCount+2)continue;
     for(let i=free.length-1;i>0;i--){const j=Math.floor(random()*(i+1));[free[i],free[j]]=[free[j],free[i]];}
-    const board={size,active,walls,start:free[0],stars:free.slice(1,1+starCount),extra:free.slice(1+starCount,1+starCount+extraCount)};
+    const board={size,active,walls,start:free[0],stars:free.slice(1,1+starCount),extra:free.slice(1+starCount,1+starCount+extraCount),
+      extraRange,linked:Boolean(spec&&spec.linked),directions:spec&&spec.directed?Array.from({length:extraCount},()=>between(random,0,3)):null};
     if(connected(board))return board;
   }
 }
 // Tahtada küçük bir değişiklik yapar; geçerli bir tahta çıkmazsa null.
 function mutate(random,board){
-  const next={...board,walls:new Set(board.walls),stars:[...board.stars],extra:[...board.extra]};
-  const empty=emptyCells(board),[minStars,maxStars]=STARS_BY_SIZE[board.size];
-  const kind=choose(random,["star","star","star","start","wall+","wall-","wall~","star+","star-",...(board.extra.length?["extra","extra"]:[])]);
-  if(kind!=="wall-"&&kind!=="star-"&&!empty.length)return null;
-  const target=choose(random,empty);
+  const next={...board,walls:new Set(board.walls),stars:[...board.stars],extra:[...board.extra],directions:board.directions&&[...board.directions]};
+  const empty=emptyCells(board),[minStars,maxStars]=STARS_BY_SIZE[board.size],[minExtra,maxExtra]=board.extraRange;
+  const kinds=["star","star","star","start","wall+","wall-","wall~","star+","star-"];
+  if(board.extra.length)kinds.push("extra","extra");                // özellik karesini taşı
+  if(board.directions)kinds.push("extra>","extra>");                // okun yönünü değiştir
+  if(minExtra<maxExtra)kinds.push("extra+","extra-");               // özellik karesi ekle / çıkar
+  const kind=choose(random,kinds);
+  if(!["wall-","star-","extra-","extra>"].includes(kind)&&!empty.length)return null;
+  const target=choose(random,empty),pick=between(random,0,Math.max(0,next.extra.length-1));
   if(kind==="star")next.stars[between(random,0,next.stars.length-1)]=target;
   else if(kind==="start")next.start=target;
-  else if(kind==="extra")next.extra[between(random,0,next.extra.length-1)]=target;
+  else if(kind==="extra")next.extra[pick]=target;
+  else if(kind==="extra>")next.directions[pick]=(next.directions[pick]+between(random,1,3))%4;
+  else if(kind==="extra+"){if(next.extra.length>=maxExtra)return null;next.extra.push(target);if(next.directions)next.directions.push(between(random,0,3));}
+  else if(kind==="extra-"){if(next.extra.length<=minExtra)return null;next.extra.splice(pick,1);if(next.directions)next.directions.splice(pick,1);}
   else if(kind==="star+"){if(next.stars.length>=maxStars)return null;next.stars.push(target);}
   else if(kind==="star-"){if(next.stars.length<=minStars)return null;next.stars.splice(between(random,0,next.stars.length-1),1);}
   else if(kind==="wall+"){if(next.walls.size>=MAX_WALLS[board.size])return null;next.walls.add(target);}
@@ -124,42 +143,55 @@ function mutate(random,board){
 // Aynı zorluktaki adaylar arasında tercih: tahtanın çoğu işe yarasın, zorluk aralığın ortasına
 // yakın olsun, çözüm uzunluğu o zorluktan beklenene yakın olsun, çözüm sayısı az olsun
 // (her yol çıkmasın, bulmaca "sıkı" dursun), tahta duvara boğulmasın.
-function quality(rawLevel,analysis,target){
-  return 2*analysis.usedCells-0.5*Math.abs(analysis.raw-Difficulty.rawFromRating(target))/HALF_BIN
+function quality(rawLevel,analysis,target,center=Difficulty.rawFromRating(target)){
+  return 2*analysis.usedCells-0.5*Math.abs(analysis.raw-center)/HALF_BIN
     -0.2*Math.abs(analysis.minMoves-idealMoves(target))-0.1*Math.log2(analysis.solutions)-0.1*rawLevel.walls.length;
 }
+// Blok sonu bölümü "sıkı" mı: en çok iki çözümü var, çözümü uzun (ama bitmek bilmez değil) ve birkaç
+// hamle ilerisini gören usta oyuncuya da neredeyse hedef kadar zor geliyor (tuzakları geç ortaya çıkıyor).
+function tight(analysis,target){
+  return analysis.solutions<=FINALE_MAX_SOLUTIONS&&analysis.minMoves>=FINALE_MOVES[0]&&analysis.minMoves<=FINALE_MOVES[1]
+    &&Difficulty.ratingFromRaw(analysis.expertRaw)>=target-Difficulty.STEP;
+}
 // Bölüm bu yuvaya neden konamaz? Konabiliyorsa null. Yuvaya uyan bölüm: bloğun özelliğini taşır,
-// çözülebilir, hesaplanan zorluğu hedefe eşittir ve özellik kullanılmadan çözülemez.
+// çözülebilir, hesaplanan zorluğu hedefe eşittir ve özellik kullanılmadan çözülemez (her çözümde
+// nokta en az bir kez geçitten geçer ya da bir okta dönüp yoluna devam eder).
 function misfit(rawLevel,feature,target,found=inspect(rawLevel)){
   const {analysis}=found,name=value=>value??"temel";
   if(found.feature!==feature)return `özelliği "${name(found.feature)}", bu blokta "${name(feature)}" olmalı`;
   if(!analysis||!analysis.solvable)return "çözümü yok";
   if(analysis.rating!==target)return `zorluğu ${starText(analysis.rating)}, olması gereken ${starText(target)}`;
-  // 5 yıldızın üst sınırı yok; blok sonu makul kalsın diye o da diğer aralıklarla aynı genişlikte tutulur.
-  if(analysis.raw>Difficulty.rawFromRating(target)+HALF_BIN)return "5 yıldız aralığının da üstünde (fazla zor)";
-  if(feature&&!FEATURES[feature].essential(rawLevel))return `"${feature}" kullanılmadan da çözülebiliyor`;
-  return null;
+  // 5 yıldızın üst sınırı yok; blok sonu ölçüsüz zorlaşmasın diye bir çeyrek yıldızlık payla sınırlanır.
+  if(analysis.raw>Difficulty.rawFromRating(target)+2*HALF_BIN)return "5 yıldız aralığının da üstünde (fazla zor)";
+  if(feature&&analysis.featureless)return `"${feature}" kullanılmadan da çözülebiliyor`;
+  return feature?FEATURES[feature].flaw(rawLevel,analysis):null;
 }
 const fits=(...args)=>misfit(...args)===null;
 
 // Hedef zorlukta `count` farklı bölüm arar. taken: oyunda zaten bulunan bölümler ve tahta iskeletleri.
-function search(random,size,feature,target,count,taken){
-  const center=Difficulty.rawFromRating(target),found=new Map();
+// finale: blok sonu bölümü aranıyor; yalnızca sıkı adaylar alınır, 5 yıldızda aralığın üst yarısı hedeflenir.
+function search(random,size,feature,target,count,taken,finale=false){
+  const center=Difficulty.rawFromRating(target)+(finale&&target===5?HALF_BIN:0),found=new Map();
+  const wanted=(finale?FINALE_WANTED:WANTED)*count;
   const distance=analysis=>Math.abs(analysis.raw-center);
   const evaluate=board=>{
     const rawLevel=toLevel(board,feature),{analysis}=inspect(rawLevel,{maxStates:SEARCH_STATES});
     return analysis&&analysis.solvable?{board,rawLevel,analysis}:null;
   };
-  let tries=0,budget=BUDGET*count;
+  let tries=0,budget=BUDGET*count*(finale?2:1);
   for(let round=0;round<3&&found.size<count;round++,budget*=2){
-    while(tries<budget&&found.size<WANTED*count){
+    while(tries<budget&&found.size<wanted){
       let current=null;
       while(!current&&tries<budget){tries++;current=evaluate(randomBoard(random,size,feature));}
       for(let idle=0;current&&idle<80&&tries<budget;idle++){
-        if(current.analysis.rating===target&&current.analysis.usedCells>=MIN_USED_CELLS){
+        const {analysis}=current;
+        if(analysis.rating===target&&analysis.usedCells>=MIN_USED_CELLS&&(!finale||tight(analysis,target))){
           const id=signature(current.rawLevel);
-          if(!found.has(id)&&!taken.has(id)&&!taken.has(skeleton(current.rawLevel,feature))&&fits(current.rawLevel,feature,target,{feature,analysis:current.analysis}))
-            found.set(id,{...current,score:quality(current.rawLevel,current.analysis,target)});
+          if(!found.has(id)&&!taken.has(id)&&!taken.has(skeleton(current.rawLevel,feature))&&fits(current.rawLevel,feature,target,{feature,analysis})){
+            // Blok sonunda tek çözümlü ve usta oyuncuya zor gelen aday öne geçer.
+            const bonus=finale?(analysis.solutions===1?1:0)+0.5*(analysis.expertRaw-analysis.raw):0;
+            found.set(id,{...current,score:quality(current.rawLevel,analysis,target,center)+bonus});
+          }
         }
         const board=mutate(random,current.board);if(!board)continue;
         tries++;
@@ -211,7 +243,8 @@ function main(){
       if(missing){
         // Tohuma atılan bölümler de katılır: beğenilmeyen bölüm her seferinde bambaşka bir aramayla değişir.
         const replaced=open.map(n=>levels[n-1]?signature(levels[n-1]):"").join("");
-        const result=search(randomSource(seed*1000003+group[0]+(replaced?hash(replaced):0)),size,feature,target,missing,taken);
+        const finale=(group[0]-1)%Difficulty.BLOCK_SIZE>=Difficulty.BLOCK_SIZE-FINALE_SLOTS;
+        const result=search(randomSource(seed*1000003+group[0]+(replaced?hash(replaced):0)),size,feature,target,missing,taken,finale);
         if(!result)throw Error(`Bölüm ${open.join(",")} için ${starText(target)} zorlukta aday bulunamadı; başka bir --seed dene.`);
         for(const item of result){placed.push({rawLevel:item.rawLevel,source:"yeni"});taken.add(signature(item.rawLevel));taken.add(skeleton(item.rawLevel,feature));}
       }
@@ -229,4 +262,4 @@ function main(){
   console.log(`${LEVELS_FILE}: ${total} bölüm, ${total-kept.size} yuva dolduruldu, ${kept.size} bölüme dokunulmadı.`);
 }
 if(require.main===module)main();
-module.exports={misfit};
+module.exports={misfit,tight};

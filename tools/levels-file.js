@@ -3,7 +3,7 @@
 const fs=require("fs"),path=require("path");
 const Engine=require("../engine.js"),Difficulty=require("../difficulty.js");
 
-const LEVELS_FILE=path.join(__dirname,"..","levels-v6.json");
+const LEVELS_FILE=path.join(__dirname,"..","levels-v7.json");
 
 function readLevels(file=LEVELS_FILE){
   return fs.existsSync(file)?JSON.parse(fs.readFileSync(file,"utf8")):[];
@@ -20,7 +20,7 @@ function inspect(rawLevel,options){
   const level=Engine.normalizeLevel(rawLevel);
   return {level,feature:Engine.featureOf(level),analysis:Difficulty.analyze(level,options)};
 }
-// @ başlangıç, * yıldız (sıralıysa numarası), O geçit, # duvar, G kapı, k anahtar, boşluk = tahta dışı
+// @ başlangıç, * yıldız (sıralıysa numarası), O geçit, ^ > v < ok, # duvar, G kapı, k anahtar, boşluk = tahta dışı
 function draw(rawLevel){
   const level=Engine.normalizeLevel(rawLevel),rows=[];
   for(let r=0;r<level.height;r++){
@@ -29,7 +29,7 @@ function draw(rawLevel){
       const id=Engine.key(r,c);
       row+=!level.activeSet.has(id)?" ":level.wallSet.has(id)?"#":r===level.start[0]&&c===level.start[1]?"@"
         :level.stars.includes(id)?(level.starOrder.length?String(level.starOrder.indexOf(id)+1):"*")
-        :level.portalMap.has(id)?"O":level.gateSet.has(id)?"G":level.keys.includes(id)?"k":".";
+        :level.portalMap.has(id)?"O":level.arrowMap.has(id)?"^>v<"[Engine.dirNames.indexOf(level.arrowMap.get(id))]:level.gateSet.has(id)?"G":level.keys.includes(id)?"k":".";
     }
     rows.push("  |"+row+"|");
   }

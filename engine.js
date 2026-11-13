@@ -12,11 +12,12 @@
     return {...l,activeSet:new Set(l.activeCells.map(pointKey)),wallSet:new Set(l.walls.map(pointKey)),
       gateSet:new Set((l.gates??[]).map(pointKey)),keys:(l.keys??[]).map(pointKey),
       portalMap:portals.length===2?new Map([[pointKey(portals[0]),pointKey(portals[1])],[pointKey(portals[1]),pointKey(portals[0])]]):new Map(),
+      arrowMap:new Map((l.arrows??[]).map(arrow=>[pointKey(arrow),arrow.direction])),
       stars:l.stars.map(pointKey),starOrder:(l.starOrder??[]).map(pointKey),start:[l.start.row,l.start.column]};
   }
-  // Bölümün kullandığı özellik: "gate" | "portal" | "order" | null (temel bölüm).
+  // Bölümün kullandığı özellik: "gate" | "portal" | "arrow" | "order" | null (temel bölüm).
   function featureOf(level){
-    return level.keys.length?"gate":level.portalMap.size?"portal":level.starOrder.length?"order":null;
+    return level.keys.length?"gate":level.portalMap.size?"portal":level.arrowMap.size?"arrow":level.starOrder.length?"order":null;
   }
   function initialState(level){return {position:[...level.start],closed:new Set(),stars:new Set(level.stars),keys:new Set(level.keys),orderIndex:0,moves:0};}
   function copyState(s){return {position:[...s.position],closed:new Set(s.closed),stars:new Set(s.stars),keys:new Set(s.keys),orderIndex:s.orderIndex,moves:s.moves};}
@@ -30,23 +31,31 @@
     }
   }
   // Bir hamle: nokta o yönde son açık kareye kayar, ayrıldığı kare kapanır.
+  //  - Geçit: girilen geçit hemen kapanır, nokta eşinden çıkar ve hamle biter.
+  //  - Ok: giren nokta okun yönüne döner ve kaymayı sürdürür. Oka karşıdan girilmez (duvar gibidir);
+  //    aynı hamlede bir oktan ikinci kez geçilmez (oklar noktayı sonsuz döngüye sokamaz).
   // Hamle yapılamıyorsa (ya da bölüm bitmişse) null döner.
   function slide(level,s,dir){
     if(s.stars.size===0)return null;
-    const [dr,dc]=dirs[dir];let [r,c]=s.position;
+    let [dr,dc]=dirs[dir],[r,c]=s.position;
     const after=copyState(s);after.closed.add(key(r,c));
+    const passedArrows=new Set();
     let moved=false;
     while(active(level,r+dr,c+dc)){
       const next=key(r+dr,c+dc);
       if(level.wallSet.has(next)||after.closed.has(next)||(level.gateSet.has(next)&&!openGate(level,after)))break;
+      const arrow=level.arrowMap.get(next);
+      if(arrow&&(passedArrows.has(next)||(dirs[arrow][0]===-dr&&dirs[arrow][1]===-dc)))break;
       const exit=level.portalMap.get(next);
       if(exit&&(after.closed.has(exit)||level.wallSet.has(exit)||(level.gateSet.has(exit)&&!openGate(level,after))))break;
       r+=dr;c+=dc;moved=true;visit(level,after,next);
       if(exit){
+        after.closed.add(next);
         visit(level,after,exit);
         [r,c]=exit.split(",").map(Number);
         break;
       }
+      if(arrow){passedArrows.add(next);[dr,dc]=dirs[arrow];}
     }
     if(!moved)return null;
     after.position=[r,c];after.moves++;
