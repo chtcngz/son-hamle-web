@@ -1,21 +1,15 @@
 "use strict";
-const dirs = {Up:[-1,0],Right:[0,1],Down:[1,0],Left:[0,-1]};
-const saveKey = "sonhamle-html-v3"; // v3: levels 6-40 replaced, old completion marks no longer apply
+// Oyun kuralları engine.js'te, zorluk hesabı difficulty.js'te; burası yalnızca arayüz.
+const {key,normalizeLevel,featureOf} = SonHamleEngine;
+const {BLOCK_SIZE,BLOCK_FEATURES} = SonHamleDifficulty;
+const saveKey = "sonhamle-html-v4"; // v4: 20'lik bloklarla yeni dizilim, eski tamamlanma işaretleri geçersiz
+const featureNames = {portal:"Geçit",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
+const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
 const $ = id => document.getElementById(id);
-const key = (r,c) => `${r},${c}`;
 let levels = [], level, number = 1, state, progress;
 const initialProgress = () => ({unlocked:1,current:1,completed:[]});
-const pointKey = p => key(p.row,p.column);
-
-function normalizeLevel(l){
-  const portals=l.portals??[];
-  return {...l,activeSet:new Set(l.activeCells.map(pointKey)),wallSet:new Set(l.walls.map(pointKey)),
-    gateSet:new Set((l.gates??[]).map(pointKey)),keys:(l.keys??[]).map(pointKey),
-    portalMap:portals.length===2?new Map([[pointKey(portals[0]),pointKey(portals[1])],[pointKey(portals[1]),pointKey(portals[0])]]):new Map(),
-    stars:l.stars.map(pointKey),starOrder:(l.starOrder??[]).map(pointKey),start:[l.start.row,l.start.column]};
-}
-function initialState(){return {position:[...level.start],closed:new Set(),stars:new Set(level.stars),keys:new Set(level.keys),orderIndex:0,moves:0};}
-function copyState(s){return {position:[...s.position],closed:new Set(s.closed),stars:new Set(s.stars),keys:new Set(s.keys),orderIndex:s.orderIndex,moves:s.moves};}
+const initialState = () => SonHamleEngine.initialState(level);
+const openGate = s => SonHamleEngine.openGate(level,s);
 function save(){localStorage.setItem(saveKey,JSON.stringify(progress));}
 function loadLevel(n){
   number=n;level=levels[n-1];state=initialState();progress.current=n;save();
@@ -23,50 +17,28 @@ function loadLevel(n){
   $("message").textContent="Bir hücreye tıkla; nokta o yönde son açık kareye kayar.";
   render();
 }
-function active(r,c){return r>=0&&r<level.height&&c>=0&&c<level.width&&level.activeSet.has(key(r,c));}
-function openGate(s){return level.keys.length>0&&s.keys.size<level.keys.length;}
-function visit(s,id){
-  s.keys.delete(id);
-  if(s.stars.has(id)&&(!level.starOrder.length||level.starOrder[s.orderIndex]===id)){
-    s.stars.delete(id);
-    if(level.starOrder.length)s.orderIndex++;
-  }
-}
-function slide(s,dir){
-  if(s.stars.size===0)return null;
-  const [dr,dc]=dirs[dir];let [r,c]=s.position;
-  const after=copyState(s);after.closed.add(key(r,c));
-  let moved=false;
-  while(active(r+dr,c+dc)){
-    const next=key(r+dr,c+dc);
-    if(level.wallSet.has(next)||after.closed.has(next)||(level.gateSet.has(next)&&!openGate(after)))break;
-    const exit=level.portalMap.get(next);
-    if(exit&&(after.closed.has(exit)||level.wallSet.has(exit)||(level.gateSet.has(exit)&&!openGate(after))))break;
-    r+=dr;c+=dc;moved=true;visit(after,next);
-    if(exit){
-      visit(after,exit);
-      [r,c]=exit.split(",").map(Number);
-      break;
-    }
-  }
-  if(!moved)return null;
-  after.position=[r,c];after.moves++;
-  return after;
-}
-function hasMove(s){return Object.keys(dirs).some(dir=>slide(s,dir)!==null);}
 function move(dir){
   if(!level||state.stars.size===0)return;
-  const after=slide(state,dir);if(!after)return;
+  const after=SonHamleEngine.slide(level,state,dir);if(!after)return;
   state=after;
   if(state.stars.size===0){
     progress.completed=Array.from(new Set([...progress.completed,number]));progress.unlocked=Math.max(progress.unlocked,Math.min(levels.length,number+1));save();
     $("message").textContent=number===levels.length?"Seri tamamlandı!":"Harika! Bütün yıldızlar toplandı.";
-  }else if(!hasMove(state))$("message").textContent="Çıkmaz! Yeniden Başlat ile başka yol dene.";
+  }else if(!SonHamleEngine.hasMove(level,state))$("message").textContent="Çıkmaz! Yeniden Başlat ile başka yol dene.";
   else $("message").textContent="Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
   render();
 }
+// Zorluk bölümün kendisinden hesaplanır (bölüm başına bir kez). Hesaplanamazsa dosyadaki değere düşülür.
+function ratingOf(l){
+  if(l.rating===undefined){
+    let computed=null;
+    try{computed=SonHamleDifficulty.rate(l);}catch{}
+    l.rating=computed??(Number.isFinite(l.difficultyRating)?l.difficultyRating:0);
+  }
+  return l.rating;
+}
 function renderDifficulty(){
-  const rating=Number.isFinite(level.difficultyRating)?level.difficultyRating:0;
+  const rating=ratingOf(level);
   const label=rating?rating.toLocaleString("tr-TR",{maximumFractionDigits:2}):"–";
   $("difficulty").setAttribute("aria-label",`Tahmini zorluk: ${label} / 5`);
   $("difficulty").setAttribute("title","Bölümün hesaplanan tahmini zorluğu");
@@ -86,8 +58,9 @@ function render(){
   $("counters").textContent=`Yıldız: ${state.stars.size} · Hamle: ${state.moves}`+(level.starOrder.length?` · Sıra: ${Math.min(state.orderIndex+1,level.starOrder.length)}/${level.starOrder.length}`:"");
   const hint=$("rule-hint");
   if(hint){
-    hint.hidden=number<=40;
-    hint.textContent=level.keys.length?"Anahtarı al: kapı açılır.":level.portalMap.size?"Portala gir: eşinden çıkarsın ve hamle biter.":level.starOrder.length?"Yıldızları numara sırasıyla topla.":"";
+    const feature=featureOf(level);
+    hint.hidden=!feature;
+    hint.textContent=featureHints[feature]??"";
   }
   const board=$("board");board.style.gridTemplateColumns=`repeat(${level.width},1fr)`;board.style.gridTemplateRows=`repeat(${level.height},1fr)`;
   board.replaceChildren();
@@ -104,7 +77,7 @@ function render(){
         cell.setAttribute("aria-label",openGate(state)?"Açık kapı":"Kilitli kapı");
         if(!openGate(state))cell.textContent="▣";
       }
-      if(level.portalMap.has(id)){cell.classList.add("portal");cell.setAttribute("aria-label","Portal");}
+      if(level.portalMap.has(id)){cell.classList.add("portal");cell.setAttribute("aria-label","Geçit");}
       if(state.keys.has(id)){
         const icon=document.createElement("span");icon.className="key-icon";icon.textContent="🔑";cell.append(icon);
         cell.setAttribute("aria-label","Anahtar");
@@ -123,7 +96,7 @@ function render(){
         const dot=document.createElement("span");dot.className="player";cell.append(dot);
         const waitingStar=state.stars.has(id)&&level.starOrder.length
           ?`, ${level.starOrder.indexOf(id)+1}. yıldız burada, sırası gelmedi`:"";
-        cell.setAttribute("aria-label","Oyuncu"+(level.portalMap.has(id)?", portal üzerinde":"")+waitingStar);
+        cell.setAttribute("aria-label","Oyuncu"+(level.portalMap.has(id)?", geçit üzerinde":"")+waitingStar);
       }
     }
     board.append(cell);
@@ -139,6 +112,12 @@ function chooseDirection(r,c){
 function showLevels(){
   const grid=$("level-grid");grid.replaceChildren();
   for(let n=1;n<=levels.length;n++){
+    if((n-1)%BLOCK_SIZE===0){ // her 20 bölümde yeni özellik: blok başlığı
+      const title=document.createElement("p");title.className="block-title";
+      const feature=BLOCK_FEATURES[(n-1)/BLOCK_SIZE]??featureOf(levels[n-1]);
+      title.textContent=`${featureNames[feature]??"Temel"} · ${n}–${Math.min(n+BLOCK_SIZE-1,levels.length)}`;
+      grid.append(title);
+    }
     const button=document.createElement("button");button.type="button";button.textContent=String(n).padStart(2,"0")+(progress.completed.includes(n)?" ✓":"");
     if(progress.completed.includes(n))button.classList.add("complete");
     if(n===number)button.classList.add("current");
@@ -155,8 +134,8 @@ $("restart").addEventListener("click",()=>{state=initialState();$("message").tex
 $("next").addEventListener("click",()=>{if(number<levels.length)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});
-fetch("levels-v5.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
-  if(data.length!==70)throw Error("70 bölüm yüklenemedi");
+fetch("levels-v6.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
+  if(!Array.isArray(data)||!data.length)throw Error("bölüm listesi boş");
   levels=data.map(normalizeLevel);
   try{progress={...initialProgress(),...JSON.parse(localStorage.getItem(saveKey))};}catch{progress=initialProgress();}
   const requested=Number(new URLSearchParams(location.search).get("level"));
