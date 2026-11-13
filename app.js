@@ -18,6 +18,7 @@ const featureReminders = {portal:"Geçit: eşinden çıkarsın",arrow:"Ok: yön�
 const directionNames = {Up:"yukarı",Right:"sağa",Down:"aşağı",Left:"sola"};
 const $ = id => document.getElementById(id);
 let levels = [], level, number = 1, state, progress;
+let resultClosed = false; // oyuncu sonuç penceresini kapattı: tahtaya bakıyor
 const initialProgress = () => ({unlocked:1,current:1,completed:[]});
 const initialState = () => SonHamleEngine.initialState(level);
 const openGate = s => SonHamleEngine.openGate(level,s);
@@ -37,11 +38,12 @@ function loadProgress(){
   return initialProgress();
 }
 function loadLevel(n){
-  number=n;level=levels[n-1];state=initialState();progress.current=n;save();
+  number=n;level=levels[n-1];state=initialState();resultClosed=false;progress.current=n;save();
   $("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;
   $("message").textContent="Bir hücreye tıkla; nokta o yönde son açık kareye kayar.";
   render();
 }
+function restart(){state=initialState();resultClosed=false;$("message").textContent="Bölüm yeniden başladı.";render();}
 function move(dir){
   if(!level||state.stars.size===0)return;
   const after=SonHamleEngine.slide(level,state,dir);if(!after)return;
@@ -143,7 +145,28 @@ function render(){
     board.append(cell);
   }
   $("next").hidden=state.stars.size!==0||number===levels.length;
+  renderResult();
 }
+// Sonuç penceresi: bölüm bitince ya da yapacak hamle kalmayınca ekranın ortasında açılır (style.css onu
+// son hamle görülsün diye kısa bir gecikmeyle gösterir; o ana kadar tıklanamaz).
+// Karta dokunmak sıradaki işi yapar: sonraki bölüm, son bölümde bölüm listesi, çıkmazda yeniden başlatma.
+// Kartın dışına dokunmak ya da Esc pencereyi kapatır; tahta son hâliyle ve alttaki düğmelerle kalır.
+function renderResult(){
+  const won=state.stars.size===0,stuck=!won&&!SonHamleEngine.hasMove(level,state),box=$("result");
+  box.hidden=resultClosed||!(won||stuck);
+  if(box.hidden)return;
+  const last=number===levels.length;
+  box.className=won?"result won":"result lost";
+  $("result-title").textContent=won?"Başardın!":"Kaybettin!";
+  $("result-text").textContent=!won?"Çıkmaza girdin: hamle kalmadı.":last?"Bütün bölümleri bitirdin.":`Bütün yıldızları ${state.moves} hamlede topladın.`;
+  $("result-action").textContent=!won?"Yeniden Başla":last?"Bölümler":"Sonraki Bölüm";
+}
+function resultAction(){
+  if(state.stars.size!==0)restart();
+  else if(number<levels.length)loadLevel(number+1);
+  else showLevels();
+}
+function closeResult(){resultClosed=true;$("result").hidden=true;}
 function chooseDirection(r,c){
   const dr=r-state.position[0],dc=c-state.position[1];
   if(!dr&&!dc)return null;
@@ -165,13 +188,20 @@ function showLevels(){
     button.addEventListener("click",()=>loadLevel(n));grid.append(button);
   }
   $("game-view").hidden=true;$("levels-view").hidden=false;$("levels-toggle").hidden=true;
+  closeResult();
 }
 $("board").addEventListener("click",e=>{
   const cell=e.target.closest(".cell");if(!cell||cell.classList.contains("void"))return;
   const dir=chooseDirection(Number(cell.dataset.row),Number(cell.dataset.col));if(dir)move(dir);
 });
-document.addEventListener("keydown",e=>{const dir={ArrowUp:"Up",ArrowRight:"Right",ArrowDown:"Down",ArrowLeft:"Left"}[e.key];if(dir){e.preventDefault();move(dir);}});
-$("restart").addEventListener("click",()=>{state=initialState();$("message").textContent="Bölüm yeniden başladı.";render();});
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape"&&!$("result").hidden)return closeResult();
+  const dir={ArrowUp:"Up",ArrowRight:"Right",ArrowDown:"Down",ArrowLeft:"Left"}[e.key];if(dir){e.preventDefault();move(dir);}
+});
+$("restart").addEventListener("click",restart);
+$("result-card").addEventListener("click",resultAction);
+$("result").addEventListener("click",e=>{if(e.target===e.currentTarget)closeResult();}); // kartın dışı
+$("result").addEventListener("animationend",()=>$("result-card").focus({preventScroll:true})); // klavyeyle oynayan Enter ile sürdürür
 $("next").addEventListener("click",()=>{if(number<levels.length)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});
