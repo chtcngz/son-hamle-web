@@ -23,13 +23,14 @@
 
   // Oyunun akışı: her 20 bölümde bir özellik gelir. Sıradaki 20'lik bloğu açmak için
   // listeye özelliğin adını ekleyip `node tools/generate.js` çalıştırmak yeter.
-  // null = temel oyun. Tanımlı özellikler: "portal" (geçit).
-  const BLOCK_FEATURES=[null,"portal"];
+  // null = temel oyun. Üreticide tanımlı özellikler: "portal" (geçit), "arrow" (ok).
+  const BLOCK_FEATURES=[null,"portal","arrow"];
   const BLOCK_SIZE=20;        // her özellik 20 bölüm sürer
   const STEP=0.25;            // puan çeyrek yıldız adımlarıyla verilir
   const GREED=2;              // dalgın oyuncunun toplayan hamleye verdiği ağırlık
   const RAW_ONE_STAR=0;       // log2(emek) bu değerde 1 yıldız
   const RAW_FIVE_STARS=12;    // log2(emek) bu değerde 5 yıldız
+  const EXPERT_SIGHT=3;       // usta oyuncunun önünü gördüğü hamle sayısı
   const MAX_STATES=2_000_000; // bundan büyük oyun ağacı hesaplanmaz (null döner)
 
   // Bölüm numarasının (1'den başlar) olması gereken zorluğu.
@@ -66,31 +67,45 @@
       if(index.has(from)&&index.has(to))portal[index.get(from)]=index.get(to);else valid=false;
     }
     const gate=new Uint8Array(n);for(const id of level.gateSet)if(index.has(id))gate[index.get(id)]=1;
+    const arrow=new Int8Array(n).fill(-1); // ok karesinin yönü (0 yukarı, 1 sağ, 2 aşağı, 3 sol), ok yoksa -1
+    for(const [id,direction] of level.arrowMap){
+      if(index.has(id)&&Engine.dirNames.includes(direction))arrow[index.get(id)]=Engine.dirNames.indexOf(direction);else valid=false;
+    }
     const starBit=new Int32Array(n),keyBit=new Int32Array(n),orderOf=new Int8Array(n).fill(-1);
     // Konum anahtarı tek sayıya sığmalı (53 bit): 6x6'ya kadar tahtalarda fazlasıyla yeter.
     if(n>64||level.keys.length+level.stars.length+6+Math.max(0,n-32)+32>52)valid=false;
     level.stars.forEach((id,i)=>{if(index.has(id))starBit[index.get(id)]=1<<i;else valid=false;});
     level.keys.forEach((id,i)=>{if(index.has(id))keyBit[index.get(id)]=1<<i;else valid=false;});
     level.starOrder.forEach((id,i)=>{if(index.has(id))orderOf[index.get(id)]=i;});
-    return {valid,n,cells,neighbor,portal,gate,starBit,keyBit,orderOf,ordered:level.starOrder.length>0,
+    return {valid,n,cells,neighbor,portal,gate,arrow,starBit,keyBit,orderOf,ordered:level.starOrder.length>0,
       starCount:level.stars.length,keyCount:level.keys.length,start:index.get(Engine.key(level.start[0],level.start[1])),
       allStars:2**level.stars.length-1,allKeys:2**level.keys.length-1};
   }
   function bitCount(x){let count=0;while(x){x&=x-1;count++;}return count;}
 
   // engine.js'teki slide ile aynı kural, bit maskeleriyle. Sonuç `out` içine yazılır; hamle yoksa false.
-  const out={position:0,closedLow:0,closedHigh:0,stars:0,keys:0,collects:false,passedLow:0,passedHigh:0};
+  // special: hamle özelliği gerçekten kullandı mı (geçitten geçti ya da bir okta dönüp yoluna devam etti).
+  // Son yıldız alındıktan sonra olanlar sayılmaz: o noktada bölüm zaten bitmiştir.
+  const out={position:0,closedLow:0,closedHigh:0,stars:0,keys:0,collects:false,passedLow:0,passedHigh:0,looped:false,special:false};
   function slideFast(L,position,closedLow,closedHigh,stars,keys,direction){
     if(position<32)closedLow|=1<<position;else closedHigh|=1<<(position-32);
-    let current=position,moved=false,collects=false,passedLow=0,passedHigh=0;
+    let current=position,moved=false,collects=false,passedLow=0,passedHigh=0,looped=false,special=false,turned=false;
     for(;;){
       const next=L.neighbor[current*4+direction];if(next<0)break;
       if(next<32?(closedLow>>>next)&1:(closedHigh>>>(next-32))&1)break;
       let open=L.keyCount>0&&keys!==L.allKeys;
       if(L.gate[next]&&!open)break;
+      const turn=L.arrow[next];
+      if(turn>=0){
+        if(turn===(direction+2)%4)break;
+        // passed maskesi bu hamlede geçilen kareleri tutar: ok ikinci kez geliyorsa döngü var demektir.
+        if(next<32?(passedLow>>>next)&1:(passedHigh>>>(next-32))&1){looped=true;break;}
+      }
       const exit=L.portal[next];
       if(exit>=0&&((exit<32?(closedLow>>>exit)&1:(closedHigh>>>(exit-32))&1)||(L.gate[exit]&&!open)))break;
       current=next;moved=true;
+      const live=stars!==0;
+      if(turned&&live)special=true; // okta döndükten sonra en az bir kare daha gidildi
       for(let pass=0;pass<2;pass++){ // pass 0: girilen kare, pass 1: portal çıkışı
         const id=pass===0?next:exit;if(id<0)break;
         if(id<32)passedLow|=1<<id;else passedHigh|=1<<(id-32);
@@ -98,16 +113,21 @@
         const bit=L.starBit[id];
         if(bit&stars&&(!L.ordered||L.orderOf[id]===L.starCount-bitCount(stars))){stars&=~bit;collects=true;}
       }
-      if(exit>=0){current=exit;break;}
+      if(exit>=0){ // girilen geçit hemen kapanır
+        if(next<32)closedLow|=1<<next;else closedHigh|=1<<(next-32);
+        current=exit;if(live)special=true;break;
+      }
+      if(turn>=0&&turn!==direction){direction=turn;turned=true;}
     }
     if(!moved)return false;
     out.position=current;out.closedLow=closedLow;out.closedHigh=closedHigh;out.stars=stars;out.keys=keys;
-    out.collects=collects;out.passedLow=passedLow;out.passedHigh=passedHigh;
+    out.collects=collects;out.passedLow=passedLow;out.passedHigh=passedHigh;out.looped=looped;out.special=special;
     return true;
   }
 
   // Bölümü baştan sona çözer ve ölçümleri döndürür. Bölüm bozuksa ya da oyun ağacı çok büyükse null.
   //   solvable        bölüm bitirilebilir mi
+  //   featureless     özellik hiç kullanılmadan (geçitten geçmeden, okta dönmeden) da bitirilebilir mi
   //   minMoves        en kısa çözümün hamle sayısı
   //   solutions       birbirinden farklı çözüm (hamle dizisi) sayısı
   //   states          oyun ağacındaki farklı konum sayısı
@@ -115,28 +135,32 @@
   //   casualEffort    1 + dalgın oyuncunun bölüm bitene kadar verdiği beklenen karar sayısı
   //   systematicEffort 1 + sistemli oyuncunun bölüm bitene kadar verdiği beklenen karar sayısı
   //   effort          ikisinden küçüğü; raw = log2(effort); rating = 1..5 (çeyrek adım)
-  //   usedCells       en az bir çözümün üzerinden geçtiği karelerin oranı
+  //   expertRaw       usta oyuncunun log2(emeği): bölümün "derin" zorluğu (blok sonu bölümleri için)
+  //   used / usedCells en az bir çözümün üzerinden geçtiği kareler ve oranları
+  //   loops           oklar bir hamlede noktayı aynı oka geri getiriyor mu
   function analyze(level,options={}){
     const L=compile(level);if(!L.valid)return null;
     const maxStates=options.maxStates??MAX_STATES;
     const memo=new Map();
     const highFactor=2**Math.max(0,L.n-32),starFactor=2**L.starCount;
-    const WIN={won:true,noMoves:false,winnable:true,minMoves:0,solutions:1,chance:1,decisions:0,lines:1,depthSum:0,tries:1,work:0,usedLow:0,usedHigh:0};
-    let states=0,tooBig=false;
+    const WIN={won:true,noMoves:false,winnable:true,plain:true,deadIn:Infinity,minMoves:0,solutions:1,chance:1,decisions:0,expertChance:1,expertDecisions:0,lines:1,depthSum:0,tries:1,work:0,usedLow:0,usedHigh:0};
+    let states=0,tooBig=false,loops=false;
     function solve(position,closedLow,closedHigh,stars,keys){
       if(stars===0)return WIN;
       const id=((((keys*starFactor+stars)*64+position)*highFactor+(closedHigh>>>0))*4294967296)+(closedLow>>>0);
       let node=memo.get(id);if(node)return node;
-      node={won:false,noMoves:true,winnable:false,minMoves:Infinity,solutions:0,chance:0,decisions:0,lines:1,depthSum:0,tries:0,work:0,usedLow:0,usedHigh:0};
+      node={won:false,noMoves:true,winnable:false,plain:false,deadIn:0,minMoves:Infinity,solutions:0,chance:0,decisions:0,expertChance:0,expertDecisions:0,lines:1,depthSum:0,tries:0,work:0,usedLow:0,usedHigh:0};
       memo.set(id,node);
       if(++states>maxStates){tooBig=true;return node;}
       const choices=[];
       for(let direction=0;direction<4;direction++){
         if(!slideFast(L,position,closedLow,closedHigh,stars,keys,direction))continue;
-        const collects=out.collects,passedLow=out.passedLow,passedHigh=out.passedHigh;
+        const collects=out.collects,passedLow=out.passedLow,passedHigh=out.passedHigh,special=out.special;
+        if(out.looped)loops=true;
         const child=solve(out.position,out.closedLow,out.closedHigh,out.stars,out.keys);
         if(tooBig)return node;
-        node.noMoves=false;
+        node.noMoves=false;node.deadIn=Math.max(node.deadIn,child.deadIn+1);
+        if(!special&&child.plain)node.plain=true;
         if(child.winnable){
           node.winnable=true;node.minMoves=Math.min(node.minMoves,child.minMoves+1);node.solutions+=child.solutions;
           node.usedLow|=passedLow|child.usedLow;node.usedHigh|=passedHigh|child.usedHigh;
@@ -144,6 +168,17 @@
         if(!child.noMoves)choices.push(child,collects); // sıkışılan kare aday değildir
       }
       if(choices.length===0)return node; // görünür çıkmaz: bu deneme burada biter
+      // Usta oyuncu: dalgın oyuncu gibi oynar ama EXPERT_SIGHT hamle ilerisini görür; o kadar hamlede
+      // kesin biten yollara girmez. Yalnızca geç ortaya çıkan (derin) tuzaklar onu yanıltır.
+      let expertWinners=0,expertCount=0,expertWeight=0;
+      for(let i=0;i<choices.length;i+=2)if(choices[i].deadIn>=EXPERT_SIGHT){
+        expertCount++;expertWeight+=choices[i+1]?GREED:1;if(choices[i].winnable)expertWinners++;
+      }
+      node.expertDecisions=expertCount>1&&expertWinners<expertCount?1:0;
+      for(let i=0;i<choices.length;i+=2)if(choices[i].deadIn>=EXPERT_SIGHT){
+        const weight=(choices[i+1]?GREED:1)/expertWeight;
+        node.expertChance+=weight*choices[i].expertChance;node.expertDecisions+=weight*choices[i].expertDecisions;
+      }
       let winners=0,weightSum=0;
       for(let i=0;i<choices.length;i+=2){if(choices[i].winnable)winners++;weightSum+=choices[i+1]?GREED:1;}
       // Karar: birden çok aday var ve en az biri çıkmaza götürüyor. Tek adaylı (mecburi) ya da
@@ -173,8 +208,8 @@
     }
     const rootNode=solve(L.start,0,0,L.allStars,L.allKeys);
     if(tooBig)return null;
-    const result={solvable:rootNode.winnable,states,cells:L.n,minMoves:null,solutions:0,winChance:0,
-      casualEffort:Infinity,systematicEffort:Infinity,effort:Infinity,raw:null,rating:null,usedCells:0};
+    const result={solvable:rootNode.winnable,featureless:rootNode.plain,states,cells:L.n,loops,minMoves:null,solutions:0,winChance:0,
+      casualEffort:Infinity,systematicEffort:Infinity,effort:Infinity,raw:null,rating:null,expertRaw:null,usedCells:0,used:null};
     if(!rootNode.winnable)return result;
     result.minMoves=rootNode.minMoves;result.solutions=rootNode.solutions;result.winChance=rootNode.chance;
     result.casualEffort=1+rootNode.decisions/rootNode.chance;
@@ -182,7 +217,9 @@
     result.effort=Math.min(result.casualEffort,result.systematicEffort);
     result.raw=Math.log2(result.effort);
     result.rating=ratingFromRaw(result.raw);
-    result.usedCells=(bitCount(rootNode.usedLow)+bitCount(rootNode.usedHigh)+1)/L.n;
+    result.expertRaw=Math.log2(1+rootNode.expertDecisions/rootNode.expertChance);
+    result.used=new Set(L.cells.filter((id,i)=>i===L.start||(i<32?(rootNode.usedLow>>>i)&1:(rootNode.usedHigh>>>(i-32))&1)));
+    result.usedCells=result.used.size/L.n;
     return result;
   }
   // Bölümün yıldız puanı (1–5, çeyrek adım). Çözümsüz ya da hesaplanamayan bölümde null.

@@ -3,8 +3,9 @@
 const {key,normalizeLevel,featureOf} = SonHamleEngine;
 const {BLOCK_SIZE,BLOCK_FEATURES} = SonHamleDifficulty;
 const saveKey = "sonhamle-html-v4"; // v4: 20'lik bloklarla yeni dizilim, eski tamamlanma işaretleri geçersiz
-const featureNames = {portal:"Geçit",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
-const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
+const featureNames = {portal:"Geçit",arrow:"Ok",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
+const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",arrow:"Ok seni gösterdiği yöne çevirir; oka karşıdan girilmez.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
+const directionNames = {Up:"yukarı",Right:"sağa",Down:"aşağı",Left:"sola"};
 const $ = id => document.getElementById(id);
 let levels = [], level, number = 1, state, progress;
 const initialProgress = () => ({unlocked:1,current:1,completed:[]});
@@ -20,12 +21,13 @@ function loadLevel(n){
 function move(dir){
   if(!level||state.stars.size===0)return;
   const after=SonHamleEngine.slide(level,state,dir);if(!after)return;
+  const usedPortal=after.closed.size-state.closed.size>1; // ayrılınan kareyle birlikte girilen geçit de kapandı
   state=after;
   if(state.stars.size===0){
     progress.completed=Array.from(new Set([...progress.completed,number]));progress.unlocked=Math.max(progress.unlocked,Math.min(levels.length,number+1));save();
     $("message").textContent=number===levels.length?"Seri tamamlandı!":"Harika! Bütün yıldızlar toplandı.";
   }else if(!SonHamleEngine.hasMove(level,state))$("message").textContent="Çıkmaz! Yeniden Başlat ile başka yol dene.";
-  else $("message").textContent="Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
+  else $("message").textContent=usedPortal?"Ayrıldığın kare ve girdiğin geçit kapandı. Sonraki kararı düşün.":"Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
   render();
 }
 // Zorluk bölümün kendisinden hesaplanır (bölüm başına bir kez). Hesaplanamazsa dosyadaki değere düşülür.
@@ -77,7 +79,14 @@ function render(){
         cell.setAttribute("aria-label",openGate(state)?"Açık kapı":"Kilitli kapı");
         if(!openGate(state))cell.textContent="▣";
       }
-      if(level.portalMap.has(id)){cell.classList.add("portal");cell.setAttribute("aria-label","Geçit");}
+      // Kullanılan geçit kaybolur: girilen uç kapanır, çıkılan uç sıradan kareye döner.
+      const portalOpen=level.portalMap.has(id)&&!state.closed.has(level.portalMap.get(id));
+      if(portalOpen){cell.classList.add("portal");cell.setAttribute("aria-label","Geçit");}
+      const arrow=level.arrowMap.get(id),playerHere=state.position[0]===r&&state.position[1]===c;
+      if(arrow){
+        cell.classList.add("arrow");cell.setAttribute("aria-label",`Ok: ${directionNames[arrow]}`);
+        if(!playerHere){const icon=document.createElement("span");icon.className=`arrow-icon ${arrow}`;cell.append(icon);}
+      }
       if(state.keys.has(id)){
         const icon=document.createElement("span");icon.className="key-icon";icon.textContent="🔑";cell.append(icon);
         cell.setAttribute("aria-label","Anahtar");
@@ -92,11 +101,11 @@ function render(){
         }else cell.setAttribute("aria-label","Yıldız");
         cell.append(star);
       }
-      if(state.position[0]===r&&state.position[1]===c){
+      if(playerHere){
         const dot=document.createElement("span");dot.className="player";cell.append(dot);
         const waitingStar=state.stars.has(id)&&level.starOrder.length
           ?`, ${level.starOrder.indexOf(id)+1}. yıldız burada, sırası gelmedi`:"";
-        cell.setAttribute("aria-label","Oyuncu"+(level.portalMap.has(id)?", geçit üzerinde":"")+waitingStar);
+        cell.setAttribute("aria-label","Oyuncu"+(portalOpen?", geçit üzerinde":"")+(arrow?", ok üzerinde":"")+waitingStar);
       }
     }
     board.append(cell);
@@ -134,7 +143,7 @@ $("restart").addEventListener("click",()=>{state=initialState();$("message").tex
 $("next").addEventListener("click",()=>{if(number<levels.length)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});
-fetch("levels-v6.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
+fetch("levels-v7.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
   if(!Array.isArray(data)||!data.length)throw Error("bölüm listesi boş");
   levels=data.map(normalizeLevel);
   try{progress={...initialProgress(),...JSON.parse(localStorage.getItem(saveKey))};}catch{progress=initialProgress();}

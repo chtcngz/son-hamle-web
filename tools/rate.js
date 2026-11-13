@@ -12,12 +12,13 @@ const write=args.includes("--write");
 const drawIndex=args.indexOf("--draw");
 const drawn=drawIndex<0?null:new Set((args[drawIndex+1]??"").split(",").map(Number));
 const file=args.find((arg,i)=>!arg.startsWith("--")&&(drawIndex<0||i!==drawIndex+1))??LEVELS_FILE;
-const featureNames={portal:"geçit",gate:"kapı",order:"sıra"};
+const featureNames={portal:"geçit",arrow:"ok",gate:"kapı",order:"sıra"};
 
 const levels=readLevels(file);
 if(!levels.length){console.error(`${file}: bölüm yok`);process.exit(1);}
 let mismatches=0;
-console.log("Bölüm  Özellik  Tahta  Yıldız  Hamle  Çözüm   Şans    Zorluk  Hedef");
+// Usta: birkaç hamle ilerisini gören oyuncuya göre zorluk (derin tuzakların ölçüsü; blok sonlarında önemli).
+console.log("Bölüm  Özellik  Tahta  Yıldız  Hamle  Çözüm   Şans    Usta   Zorluk  Hedef");
 levels.forEach((rawLevel,i)=>{
   const number=i+1,found=inspect(rawLevel),{level,feature,analysis}=found;
   const solved=analysis&&analysis.solvable,rating=solved?analysis.rating:null,target=Difficulty.targetRating(number);
@@ -27,7 +28,7 @@ levels.forEach((rawLevel,i)=>{
     console.log([String(number).padStart(4)+" ",(featureNames[feature]??"temel").padEnd(7),`${level.width}x${level.height}`.padEnd(5),
       String(level.stars.length).padStart(4)+"  ",String(solved?analysis.minMoves:"–").padStart(4)+" ",
       String(solved?analysis.solutions:0).padStart(5),(solved?(analysis.winChance*100).toFixed(1)+"%":"–").padStart(7),
-      " "+starText(rating)+"  ",target.toFixed(2),problem?" ← "+problem:""].join("  "));
+      starText(solved?Difficulty.ratingFromRaw(analysis.expertRaw):null)," "+starText(rating)+"  ",target.toFixed(2),problem?" ← "+problem:""].join("  "));
     if(drawn)console.log(draw(rawLevel));
   }
   if(write&&solved)rawLevel.difficultyRating=rating;
