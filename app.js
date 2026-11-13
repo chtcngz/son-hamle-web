@@ -1,12 +1,20 @@
 "use strict";
 // Oyun kuralları engine.js'te, zorluk hesabı difficulty.js'te; burası yalnızca arayüz.
-const {key,normalizeLevel,featureOf} = SonHamleEngine;
+const {key,normalizeLevel,featuresOf} = SonHamleEngine;
 const {BLOCK_SIZE,BLOCK_FEATURES} = SonHamleDifficulty;
-const saveKey = "sonhamle-html-v5"; // v5: 18–20 ve 38–40 yenilendi
-// Önceki kayıt (v4) taşınır; yalnızca yenilenen bölümlerin "tamamlandı" işareti silinir.
-const previousSaveKey = "sonhamle-html-v4", replacedSincePrevious = [18,19,20,38,39,40];
-const featureNames = {portal:"Geçit",arrow:"Ok",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
-const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",arrow:"Ok seni gösterdiği yöne çevirir; oka karşıdan girilmez.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
+const saveKey = "sonhamle-html-v6"; // v6: geçit ve ok blokları 3 yıldızdan başlayacak şekilde yeniden dizildi, durak bloğu eklendi
+// Eski kayıtlar taşınır. Her adım bir önceki sürümdeki bölüm numarasının yeni yerini söyler:
+// bölüm duruyorsa (yeri değişmiş olsa da) "tamamlandı" işareti onunla gelir, bölüm değiştiyse (null) silinir.
+// v5'in geçit ve ok bloklarından yeni eğriye uyan 12 bölüm yeni yerlerinde duruyor (eski numara: yeni numara).
+const MOVED_FROM_V5 = {32:21,33:23,34:25,35:28,36:29,37:32,38:34,39:36,40:38,52:41,53:43,54:46};
+const saveMigrations = [
+  {from:"sonhamle-html-v4",to:n=>[18,19,20,38,39,40].includes(n)?null:n},
+  {from:"sonhamle-html-v5",to:n=>n<=20?n:MOVED_FROM_V5[n]??null},
+];
+const featureNames = {portal:"Geçit",arrow:"Ok",stop:"Durak",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
+const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",arrow:"Ok seni yönüne çevirir; oka karşıdan girilmez.",stop:"Durağa giren nokta orada durur.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
+// Tahtada önceki blokların özellikleri de varsa onlar tek satırlık kısa hatırlatmayla yazılır.
+const featureReminders = {portal:"Geçit: eşinden çıkarsın",arrow:"Ok: yönüne çevirir",stop:"Durak: orada durursun",gate:"Anahtar: kapıyı açar",order:"Yıldızlar: numara sırasıyla"};
 const directionNames = {Up:"yukarı",Right:"sağa",Down:"aşağı",Left:"sola"};
 const $ = id => document.getElementById(id);
 let levels = [], level, number = 1, state, progress;
@@ -18,8 +26,13 @@ function loadProgress(){
   try{
     const saved=JSON.parse(localStorage.getItem(saveKey));
     if(saved)return {...initialProgress(),...saved};
-    const previous=JSON.parse(localStorage.getItem(previousSaveKey));
-    if(previous)return {...initialProgress(),...previous,completed:(previous.completed??[]).filter(n=>!replacedSincePrevious.includes(n))};
+    for(let index=saveMigrations.length-1;index>=0;index--){ // en yeni eski kayıttan başla
+      const previous=JSON.parse(localStorage.getItem(saveMigrations[index].from));
+      if(!previous)continue;
+      let completed=previous.completed??[];
+      for(const step of saveMigrations.slice(index))completed=completed.map(n=>step.to(n)).filter(n=>n!==null);
+      return {...initialProgress(),...previous,completed:Array.from(new Set(completed)).sort((a,b)=>a-b)};
+    }
   }catch{}
   return initialProgress();
 }
@@ -38,7 +51,9 @@ function move(dir){
     progress.completed=Array.from(new Set([...progress.completed,number]));progress.unlocked=Math.max(progress.unlocked,Math.min(levels.length,number+1));save();
     $("message").textContent=number===levels.length?"Seri tamamlandı!":"Harika! Bütün yıldızlar toplandı.";
   }else if(!SonHamleEngine.hasMove(level,state))$("message").textContent="Çıkmaz! Yeniden Başlat ile başka yol dene.";
-  else $("message").textContent=usedPortal?"Ayrıldığın kare ve girdiğin geçit kapandı. Sonraki kararı düşün.":"Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
+  else $("message").textContent=usedPortal?"Ayrıldığın kare ve girdiğin geçit kapandı. Sonraki kararı düşün."
+    :level.stopSet.has(key(...state.position))?"Durakta durdun; ayrıldığın kare kapandı. Sonraki kararı düşün."
+    :"Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
   render();
 }
 // Zorluk bölümün kendisinden hesaplanır (bölüm başına bir kez). Hesaplanamazsa dosyadaki değere düşülür.
@@ -70,10 +85,11 @@ function render(){
   renderDifficulty();
   $("counters").textContent=`Yıldız: ${state.stars.size} · Hamle: ${state.moves}`+(level.starOrder.length?` · Sıra: ${Math.min(state.orderIndex+1,level.starOrder.length)}/${level.starOrder.length}`:"");
   const hint=$("rule-hint");
-  if(hint){
-    const feature=featureOf(level);
-    hint.hidden=!feature;
-    hint.textContent=featureHints[feature]??"";
+  if(hint){ // bloğun yeni özelliği tam cümleyle, tahtadaki diğer özellikler altında kısa hatırlatmayla
+    const own=BLOCK_FEATURES[Math.floor((number-1)/BLOCK_SIZE)],features=featuresOf(level);
+    const main=features.includes(own)?own:features[0],others=features.filter(feature=>feature!==main);
+    hint.hidden=!features.length||state.stars.size===0; // bölüm bitince yerini Sonraki Bölüm düğmesine bırakır
+    hint.textContent=[featureHints[main]??"",others.map(feature=>featureReminders[feature]).join(" · ")].filter(Boolean).join("\n");
   }
   const board=$("board");board.style.gridTemplateColumns=`repeat(${level.width},1fr)`;board.style.gridTemplateRows=`repeat(${level.height},1fr)`;
   board.replaceChildren();
@@ -98,6 +114,11 @@ function render(){
         cell.classList.add("arrow");cell.setAttribute("aria-label",`Ok: ${directionNames[arrow]}`);
         if(!playerHere){const icon=document.createElement("span");icon.className=`arrow-icon ${arrow}`;cell.append(icon);}
       }
+      const stop=level.stopSet.has(id);
+      if(stop){
+        cell.classList.add("stop");cell.setAttribute("aria-label","Durak");
+        if(!playerHere){const icon=document.createElement("span");icon.className="stop-icon";cell.append(icon);}
+      }
       if(state.keys.has(id)){
         const icon=document.createElement("span");icon.className="key-icon";icon.textContent="🔑";cell.append(icon);
         cell.setAttribute("aria-label","Anahtar");
@@ -116,7 +137,7 @@ function render(){
         const dot=document.createElement("span");dot.className="player";cell.append(dot);
         const waitingStar=state.stars.has(id)&&level.starOrder.length
           ?`, ${level.starOrder.indexOf(id)+1}. yıldız burada, sırası gelmedi`:"";
-        cell.setAttribute("aria-label","Oyuncu"+(portalOpen?", geçit üzerinde":"")+(arrow?", ok üzerinde":"")+waitingStar);
+        cell.setAttribute("aria-label","Oyuncu"+(portalOpen?", geçit üzerinde":"")+(arrow?", ok üzerinde":"")+(stop?", durak üzerinde":"")+waitingStar);
       }
     }
     board.append(cell);
@@ -134,7 +155,7 @@ function showLevels(){
   for(let n=1;n<=levels.length;n++){
     if((n-1)%BLOCK_SIZE===0){ // her 20 bölümde yeni özellik: blok başlığı
       const title=document.createElement("p");title.className="block-title";
-      const feature=BLOCK_FEATURES[(n-1)/BLOCK_SIZE]??featureOf(levels[n-1]);
+      const feature=BLOCK_FEATURES[(n-1)/BLOCK_SIZE]??featuresOf(levels[n-1])[0];
       title.textContent=`${featureNames[feature]??"Temel"} · ${n}–${Math.min(n+BLOCK_SIZE-1,levels.length)}`;
       grid.append(title);
     }
@@ -154,7 +175,7 @@ $("restart").addEventListener("click",()=>{state=initialState();$("message").tex
 $("next").addEventListener("click",()=>{if(number<levels.length)loadLevel(number+1);});
 $("levels-toggle").addEventListener("click",showLevels);
 $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;});
-fetch("levels-v7.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
+fetch("levels-v8.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
   if(!Array.isArray(data)||!data.length)throw Error("bölüm listesi boş");
   levels=data.map(normalizeLevel);
   progress=loadProgress();

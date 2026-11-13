@@ -13,11 +13,15 @@
       gateSet:new Set((l.gates??[]).map(pointKey)),keys:(l.keys??[]).map(pointKey),
       portalMap:portals.length===2?new Map([[pointKey(portals[0]),pointKey(portals[1])],[pointKey(portals[1]),pointKey(portals[0])]]):new Map(),
       arrowMap:new Map((l.arrows??[]).map(arrow=>[pointKey(arrow),arrow.direction])),
+      stopSet:new Set((l.stops??[]).map(pointKey)),
       stars:l.stars.map(pointKey),starOrder:(l.starOrder??[]).map(pointKey),start:[l.start.row,l.start.column]};
   }
-  // Bölümün kullandığı özellik: "gate" | "portal" | "arrow" | "order" | null (temel bölüm).
-  function featureOf(level){
-    return level.keys.length?"gate":level.portalMap.size?"portal":level.arrowMap.size?"arrow":level.starOrder.length?"order":null;
+  // Bölümün tahtasındaki özellikler, hep aynı sırayla: "portal" (geçit), "arrow" (ok), "stop" (durak),
+  // "gate" (kapı-anahtar), "order" (sıralı yıldız). Temel bölümde liste boştur.
+  const featureNames=["portal","arrow","stop","gate","order"];
+  function featuresOf(level){
+    const present={portal:level.portalMap.size,arrow:level.arrowMap.size,stop:level.stopSet.size,gate:level.keys.length,order:level.starOrder.length};
+    return featureNames.filter(name=>present[name]);
   }
   function initialState(level){return {position:[...level.start],closed:new Set(),stars:new Set(level.stars),keys:new Set(level.keys),orderIndex:0,moves:0};}
   function copyState(s){return {position:[...s.position],closed:new Set(s.closed),stars:new Set(s.stars),keys:new Set(s.keys),orderIndex:s.orderIndex,moves:s.moves};}
@@ -34,6 +38,8 @@
   //  - Geçit: girilen geçit hemen kapanır, nokta eşinden çıkar ve hamle biter.
   //  - Ok: giren nokta okun yönüne döner ve kaymayı sürdürür. Oka karşıdan girilmez (duvar gibidir);
   //    aynı hamlede bir oktan ikinci kez geçilmez (oklar noktayı sonsuz döngüye sokamaz).
+  //  - Durak: giren nokta orada durur ve hamle biter; üstünden kayıp geçilmez. Duraktan her yöne
+  //    çıkılır ve ayrılınan durak da her kare gibi kapanır.
   // Hamle yapılamıyorsa (ya da bölüm bitmişse) null döner.
   function slide(level,s,dir){
     if(s.stars.size===0)return null;
@@ -55,6 +61,7 @@
         [r,c]=exit.split(",").map(Number);
         break;
       }
+      if(level.stopSet.has(next))break;
       if(arrow){passedArrows.add(next);[dr,dc]=dirs[arrow];}
     }
     if(!moved)return null;
@@ -63,7 +70,7 @@
   }
   function hasMove(level,s){return dirNames.some(dir=>slide(level,s,dir)!==null);}
 
-  const api={dirs,dirNames,key,pointKey,normalizeLevel,featureOf,initialState,copyState,openGate,slide,hasMove};
+  const api={dirs,dirNames,key,pointKey,normalizeLevel,featureNames,featuresOf,initialState,copyState,openGate,slide,hasMove};
   if(typeof module!=="undefined"&&module.exports)module.exports=api;
   else root.SonHamleEngine=api;
 })(typeof globalThis!=="undefined"?globalThis:this);
