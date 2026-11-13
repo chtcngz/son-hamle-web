@@ -65,8 +65,24 @@ function move(dir){
   else $("message").textContent="Ayrıldığın tek kare kapandı. Sonraki kararı düşün.";
   render();
 }
+function renderDifficulty(){
+  const rating=Number.isFinite(level.difficultyRating)?level.difficultyRating:0;
+  const label=rating?rating.toLocaleString("tr-TR",{maximumFractionDigits:2}):"–";
+  $("difficulty").setAttribute("aria-label",`Tahmini zorluk: ${label} / 5`);
+  $("difficulty").setAttribute("title","Bölümün hesaplanan tahmini zorluğu");
+  $("difficulty-value").textContent=`${label}/5`;
+  const row=$("difficulty-stars");row.replaceChildren();
+  for(let index=0;index<5;index++){
+    const star=document.createElement("span");star.className="difficulty-star";
+    const base=document.createElement("span");base.textContent="★";
+    const fill=document.createElement("span");fill.className="difficulty-star-fill";fill.textContent="★";
+    fill.style.width=`${Math.max(0,Math.min(1,rating-index))*100}%`;
+    star.append(base,fill);row.append(star);
+  }
+}
 function render(){
   $("level-title").textContent=`Bölüm ${number}`;
+  renderDifficulty();
   $("counters").textContent=`Yıldız: ${state.stars.size} · Hamle: ${state.moves}`+(level.starOrder.length?` · Sıra: ${Math.min(state.orderIndex+1,level.starOrder.length)}/${level.starOrder.length}`:"");
   const hint=$("rule-hint");
   if(hint){
