@@ -2,7 +2,9 @@
 // Oyun kuralları engine.js'te, zorluk hesabı difficulty.js'te; burası yalnızca arayüz.
 const {key,normalizeLevel,featureOf} = SonHamleEngine;
 const {BLOCK_SIZE,BLOCK_FEATURES} = SonHamleDifficulty;
-const saveKey = "sonhamle-html-v4"; // v4: 20'lik bloklarla yeni dizilim, eski tamamlanma işaretleri geçersiz
+const saveKey = "sonhamle-html-v5"; // v5: 18–20 ve 38–40 yenilendi
+// Önceki kayıt (v4) taşınır; yalnızca yenilenen bölümlerin "tamamlandı" işareti silinir.
+const previousSaveKey = "sonhamle-html-v4", replacedSincePrevious = [18,19,20,38,39,40];
 const featureNames = {portal:"Geçit",arrow:"Ok",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
 const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",arrow:"Ok seni gösterdiği yöne çevirir; oka karşıdan girilmez.",gate:"Anahtarı al: kapı açılır.",order:"Yıldızları numara sırasıyla topla."};
 const directionNames = {Up:"yukarı",Right:"sağa",Down:"aşağı",Left:"sola"};
@@ -12,6 +14,15 @@ const initialProgress = () => ({unlocked:1,current:1,completed:[]});
 const initialState = () => SonHamleEngine.initialState(level);
 const openGate = s => SonHamleEngine.openGate(level,s);
 function save(){localStorage.setItem(saveKey,JSON.stringify(progress));}
+function loadProgress(){
+  try{
+    const saved=JSON.parse(localStorage.getItem(saveKey));
+    if(saved)return {...initialProgress(),...saved};
+    const previous=JSON.parse(localStorage.getItem(previousSaveKey));
+    if(previous)return {...initialProgress(),...previous,completed:(previous.completed??[]).filter(n=>!replacedSincePrevious.includes(n))};
+  }catch{}
+  return initialProgress();
+}
 function loadLevel(n){
   number=n;level=levels[n-1];state=initialState();progress.current=n;save();
   $("levels-view").hidden=true;$("game-view").hidden=false;$("levels-toggle").hidden=false;
@@ -146,7 +157,7 @@ $("back").addEventListener("click",()=>{$("levels-view").hidden=true;$("game-vie
 fetch("levels-v7.json",{cache:"no-cache"}).then(r=>{if(!r.ok)throw Error(`HTTP ${r.status}`);return r.json();}).then(data=>{
   if(!Array.isArray(data)||!data.length)throw Error("bölüm listesi boş");
   levels=data.map(normalizeLevel);
-  try{progress={...initialProgress(),...JSON.parse(localStorage.getItem(saveKey))};}catch{progress=initialProgress();}
+  progress=loadProgress();
   const requested=Number(new URLSearchParams(location.search).get("level"));
   loadLevel(Number.isInteger(requested)&&requested>=1&&requested<=levels.length?requested:Math.min(Math.max(progress.current,1),levels.length));
 }).catch(error=>{$("message").textContent=`Bölümler yüklenemedi: ${error.message}`;});
