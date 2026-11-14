@@ -2,15 +2,18 @@
 // Oyun kuralları engine.js'te, zorluk hesabı difficulty.js'te; burası yalnızca arayüz.
 const {key,normalizeLevel,featuresOf} = SonHamleEngine;
 const {BLOCK_SIZE,BLOCK_FEATURES} = SonHamleDifficulty;
-const saveKey = "sonhamle-html-v7"; // v7: 61–80 durak yerine kara yıldız bloğu oldu, 81–100 çatlak kare bloğu eklendi
+const saveKey = "sonhamle-html-v8"; // v8: 60'tan sonraki bloklar (kara yıldız, çatlak kare) 4 yıldızdan başlayacak şekilde yeniden dizildi
 // Eski kayıtlar taşınır. Her adım bir önceki sürümdeki bölüm numarasının yeni yerini söyler:
 // bölüm duruyorsa (yeri değişmiş olsa da) "tamamlandı" işareti onunla gelir, bölüm değiştiyse (null) silinir.
 // v5'in geçit ve ok bloklarından yeni eğriye uyan 12 bölüm yeni yerlerinde duruyor (eski numara: yeni numara).
 const MOVED_FROM_V5 = {32:21,33:23,34:25,35:28,36:29,37:32,38:34,39:36,40:38,52:41,53:43,54:46};
+// v7'nin kara yıldız ve çatlak bloklarından 4 yıldızlı eğriye uyan 19 bölüm duruyor (eski numara: yeni numara).
+const MOVED_FROM_V7 = {71:67,72:68,73:69,74:70,75:75,76:76,77:77,78:78,79:79,80:80,91:88,93:90,94:91,95:95,96:96,97:97,98:98,99:99,100:100};
 const saveMigrations = [
   {from:"sonhamle-html-v4",to:n=>[18,19,20,38,39,40].includes(n)?null:n},
   {from:"sonhamle-html-v5",to:n=>n<=20?n:MOVED_FROM_V5[n]??null},
   {from:"sonhamle-html-v6",to:n=>n<=60?n:null}, // 61–80 (durak) bölümleri değişti
+  {from:"sonhamle-html-v7",to:n=>n<=60?n:MOVED_FROM_V7[n]??null},
 ];
 const featureNames = {portal:"Geçit",arrow:"Ok",stop:"Durak",black:"Kara yıldız",crack:"Çatlak kare",gate:"Kapı ve anahtar",order:"Sıralı yıldız"};
 const featureHints = {portal:"Geçide gir: eşinden çıkarsın ve hamle biter.",arrow:"Ok seni yönüne çevirir; oka karşıdan girilmez.",stop:"Durağa giren nokta orada durur.",

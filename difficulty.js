@@ -28,8 +28,10 @@
   const BLOCK_FEATURES=[null,"portal","arrow","black","crack"];
   const BLOCK_SIZE=20;        // her özellik 20 bölüm sürer
   const STEP=0.25;            // puan çeyrek yıldız adımlarıyla verilir
-  const FEATURE_START=3;      // özellik blokları bu yıldızdan başlar: oyuncu temel bloğu bitirmiştir
-  const FEATURE_PACE=2;       // özellik bloklarında kaç bölümde bir çeyrek yıldız artar
+  const FEATURE_START=3;      // geçit ve ok blokları (21–60) bu yıldızdan başlar: oyuncu temel bloğu bitirmiştir
+  const LATE_START=4;         // 60. bölümden sonraki bütün bloklar bu yıldızdan başlar
+  const LATE_FROM=61;         // LATE_START'ın geçerli olduğu ilk bölüm
+  const TOP_SLOTS=4;          // her özellik bloğunun son 4 bölümü 5 yıldızdır
   const SOLO_SLOTS=6;         // özellik bloğunun ilk bölümleri yalnızca yeni özelliği taşır
   const TRIO_SLOTS=6;         // son bölümlerinde yeni özelliğe iki eski özellik birden eşlik eder
   // Bir hamlenin gerçekten kullandığı özellikler bit olarak tutulur (bkz. slideFast → special).
@@ -45,12 +47,15 @@
 
   // Bölüm numarasının (1'den başlar) olması gereken zorluğu.
   //  - Temel blok: ilk 4 bölüm 1 yıldız, sonra her bölüm çeyrek yıldız artar, 20. bölüm 5 yıldız.
-  //  - Özellik blokları: oyuncu artık deneyimlidir; blok 3 yıldızdan başlar, iki bölümde bir
-  //    çeyrek yıldız artar ve son 4 bölüm 5 yıldızdır.
+  //  - Özellik blokları: oyuncu artık deneyimlidir. Geçit ve ok blokları 3 yıldızdan başlar ve iki bölümde
+  //    bir çeyrek yıldız artar. 60. bölümden sonraki bloklar 4 yıldızdan başlar ve dört bölümde bir çeyrek
+  //    yıldız artar. Hepsinin son 4 bölümü 5 yıldızdır.
   function targetRating(levelNumber){
     const slot=(levelNumber-1)%BLOCK_SIZE+1;
     if(levelNumber<=BLOCK_SIZE)return Math.max(1,slot*STEP);
-    return Math.min(5,FEATURE_START+Math.floor((slot-1)/FEATURE_PACE)*STEP);
+    const start=levelNumber>=LATE_FROM?LATE_START:FEATURE_START;
+    const pace=(BLOCK_SIZE-TOP_SLOTS)*STEP/(5-start); // kaç bölümde bir çeyrek yıldız artar
+    return Math.min(5,start+Math.floor((slot-1)/pace)*STEP);
   }
   // Bölümün tahtasında bulunması gereken özellikler (Engine.featureNames sırasıyla).
   // Bloğun kendi özelliği her bölümünde vardır. İlk SOLO_SLOTS bölüm onu tek başına tanıtır; sonra
