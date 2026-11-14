@@ -23,8 +23,9 @@
 
   // Oyunun akışı: her 20 bölümde bir özellik gelir. Sıradaki 20'lik bloğu açmak için
   // listeye özelliğin adını ekleyip `node tools/generate.js` çalıştırmak yeter.
-  // null = temel oyun. Üreticide tanımlı özellikler: "portal" (geçit), "arrow" (ok), "stop" (durak).
-  const BLOCK_FEATURES=[null,"portal","arrow","stop"];
+  // null = temel oyun. Üreticide tanımlı özellikler: "portal" (geçit), "arrow" (ok), "black" (kara yıldız),
+  // "crack" (çatlak kare) ve "stop" (durak; kuralı oyunda duruyor ama bloğu kaldırıldı).
+  const BLOCK_FEATURES=[null,"portal","arrow","black","crack"];
   const BLOCK_SIZE=20;        // her özellik 20 bölüm sürer
   const STEP=0.25;            // puan çeyrek yıldız adımlarıyla verilir
   const FEATURE_START=3;      // özellik blokları bu yıldızdan başlar: oyuncu temel bloğu bitirmiştir
@@ -32,7 +33,9 @@
   const SOLO_SLOTS=6;         // özellik bloğunun ilk bölümleri yalnızca yeni özelliği taşır
   const TRIO_SLOTS=6;         // son bölümlerinde yeni özelliğe iki eski özellik birden eşlik eder
   // Bir hamlenin gerçekten kullandığı özellikler bit olarak tutulur (bkz. slideFast → special).
-  const FEATURE_BITS={portal:1,arrow:2,stop:4};
+  // Kara yıldız hiçbir çözümde "kullanılmaz" (değen kaybeder); gerekliliği ayrıca ölçülür (bkz. generate.js).
+  const FEATURE_BITS={portal:1,arrow:2,stop:4,black:8,crack:16};
+  const USE_BITS=FEATURE_BITS.portal|FEATURE_BITS.arrow|FEATURE_BITS.stop|FEATURE_BITS.crack;
   const ALL_FEATURE_BITS=Object.values(FEATURE_BITS).reduce((all,bit)=>all|bit,0);
   const GREED=2;              // dalgın oyuncunun toplayan hamleye verdiği ağırlık
   const RAW_ONE_STAR=0;       // log2(emek) bu değerde 1 yıldız
@@ -98,14 +101,21 @@
     }
     const stop=new Uint8Array(n);
     for(const id of level.stopSet){if(index.has(id))stop[index.get(id)]=1;else valid=false;}
-    const present=(level.portalMap.size?FEATURE_BITS.portal:0)|(level.arrowMap.size?FEATURE_BITS.arrow:0)|(level.stopSet.size?FEATURE_BITS.stop:0);
+    const black=new Uint8Array(n);
+    for(const id of level.blackSet){if(index.has(id))black[index.get(id)]=1;else valid=false;}
+    // Çatlak karelerin her birine bir bit: konum, hangi çatlakların üstünden geçilerek kırıldığını da tutar
+    // (çatlağın gerçekten kullanıldığını ölçmek için; oyunun kendisi için kapanmış kare yeter).
+    const crackBit=new Int32Array(n);let crackCount=0;
+    for(const id of level.crackSet){if(index.has(id))crackBit[index.get(id)]=1<<crackCount++;else valid=false;}
+    const present=(level.portalMap.size?FEATURE_BITS.portal:0)|(level.arrowMap.size?FEATURE_BITS.arrow:0)|(level.stopSet.size?FEATURE_BITS.stop:0)
+      |(level.blackSet.size?FEATURE_BITS.black:0)|(crackCount?FEATURE_BITS.crack:0);
     const starBit=new Int32Array(n),keyBit=new Int32Array(n),orderOf=new Int8Array(n).fill(-1);
     // Konum anahtarı tek sayıya sığmalı (53 bit): 6x6'ya kadar tahtalarda fazlasıyla yeter.
-    if(n>64||level.keys.length+level.stars.length+6+Math.max(0,n-32)+32>52)valid=false;
+    if(n>64||crackCount+level.keys.length+level.stars.length+6+Math.max(0,n-32)+32>52)valid=false;
     level.stars.forEach((id,i)=>{if(index.has(id))starBit[index.get(id)]=1<<i;else valid=false;});
     level.keys.forEach((id,i)=>{if(index.has(id))keyBit[index.get(id)]=1<<i;else valid=false;});
     level.starOrder.forEach((id,i)=>{if(index.has(id))orderOf[index.get(id)]=i;});
-    return {valid,n,cells,neighbor,portal,gate,arrow,stop,present,starBit,keyBit,orderOf,ordered:level.starOrder.length>0,
+    return {valid,n,cells,neighbor,portal,gate,arrow,stop,black,crackBit,crackCount,present,starBit,keyBit,orderOf,ordered:level.starOrder.length>0,
       starCount:level.stars.length,keyCount:level.keys.length,start:index.get(Engine.key(level.start[0],level.start[1])),
       allStars:2**level.stars.length-1,allKeys:2**level.keys.length-1};
   }
@@ -113,15 +123,21 @@
 
   // engine.js'teki slide ile aynı kural, bit maskeleriyle. Sonuç `out` içine yazılır; hamle yoksa false.
   // special: hamlenin gerçekten kullandığı özellikler (FEATURE_BITS): geçitten geçti, bir okta dönüp
-  // yoluna devam etti ya da yoluna devam edebilecekken bir durakta kaldı.
+  // yoluna devam etti, yoluna devam edebilecekken bir durakta kaldı ya da üstünden geçerek kırdığı bir
+  // çatlakta durdu (çatlak sıradan kare olsaydı nokta yoluna devam ederdi).
   // Son yıldız alındıktan sonra olanlar sayılmaz: o noktada bölüm zaten bitmiştir.
-  const out={position:0,closedLow:0,closedHigh:0,stars:0,keys:0,collects:false,passedLow:0,passedHigh:0,looped:false,special:0};
-  function slideFast(L,position,closedLow,closedHigh,stars,keys,direction){
+  // broken: üstünden geçilerek kırılmış çatlaklar (L.crackBit). burned: nokta kara yıldıza değdi (bölüm kaybedildi).
+  // crackUse: bu hamleyi durduran kırık çatlak(lar).
+  const out={position:0,closedLow:0,closedHigh:0,stars:0,keys:0,broken:0,burned:false,collects:false,passedLow:0,passedHigh:0,looped:false,special:0,crackUse:0};
+  function slideFast(L,position,closedLow,closedHigh,stars,keys,direction,broken=0){
     if(position<32)closedLow|=1<<position;else closedHigh|=1<<(position-32);
-    let current=position,moved=false,collects=false,passedLow=0,passedHigh=0,looped=false,special=0,turned=false,held=false;
+    let current=position,moved=false,collects=false,passedLow=0,passedHigh=0,looped=false,special=0,turned=false,held=false,burned=false,crackUse=0;
     for(;;){
       const next=L.neighbor[current*4+direction];if(next<0)break;
-      if(next<32?(closedLow>>>next)&1:(closedHigh>>>(next-32))&1)break;
+      if(next<32?(closedLow>>>next)&1:(closedHigh>>>(next-32))&1){
+        if(broken&L.crackBit[next]&&stars!==0){special|=FEATURE_BITS.crack;crackUse|=L.crackBit[next];}
+        break;
+      }
       let open=L.keyCount>0&&keys!==L.allKeys;
       if(L.gate[next]&&!open)break;
       const turn=L.arrow[next];
@@ -134,6 +150,10 @@
       if(exit>=0&&((exit<32?(closedLow>>>exit)&1:(closedHigh>>>(exit-32))&1)||(L.gate[exit]&&!open)))break;
       // Durak: önü açık olduğu hâlde nokta girdiği durakta kalır (önü kapalıysa durak bir şey değiştirmemiştir).
       if(held){if(stars!==0)special|=FEATURE_BITS.stop;break;}
+      if(moved&&L.crackBit[current]){ // üstünden geçilen çatlak arkadan kapanır
+        if(current<32)closedLow|=1<<current;else closedHigh|=1<<(current-32);
+        broken|=L.crackBit[current];
+      }
       current=next;moved=true;
       const live=stars!==0;
       if(turned&&live)special|=FEATURE_BITS.arrow; // okta döndükten sonra en az bir kare daha gidildi
@@ -144,23 +164,27 @@
         const bit=L.starBit[id];
         if(bit&stars&&(!L.ordered||L.orderOf[id]===L.starCount-bitCount(stars))){stars&=~bit;collects=true;}
       }
+      if(L.black[next]){burned=true;break;}
       if(exit>=0){ // girilen geçit hemen kapanır
         if(next<32)closedLow|=1<<next;else closedHigh|=1<<(next-32);
-        current=exit;if(live)special|=FEATURE_BITS.portal;break;
+        current=exit;if(live)special|=FEATURE_BITS.portal;
+        if(L.black[exit])burned=true;
+        break;
       }
       if(L.stop[next]){held=true;continue;} // hamle burada biter; döngünün başı yalnızca önünün açık olup olmadığına bakar
       if(turn>=0&&turn!==direction){direction=turn;turned=true;}
     }
     if(!moved)return false;
-    out.position=current;out.closedLow=closedLow;out.closedHigh=closedHigh;out.stars=stars;out.keys=keys;
-    out.collects=collects;out.passedLow=passedLow;out.passedHigh=passedHigh;out.looped=looped;out.special=special;
+    out.position=current;out.closedLow=closedLow;out.closedHigh=closedHigh;out.stars=stars;out.keys=keys;out.broken=broken;out.burned=burned;
+    out.collects=collects;out.passedLow=passedLow;out.passedHigh=passedHigh;out.looped=looped;out.special=special;out.crackUse=crackUse;
     return true;
   }
 
   // Bölümü baştan sona çözer ve ölçümleri döndürür. Bölüm bozuksa ya da oyun ağacı çok büyükse null.
   //   solvable        bölüm bitirilebilir mi
   //   unneeded        tahtadaki özelliklerden, kullanılmadan (geçitten geçmeden, okta dönmeden, durakta
-  //                   kalmadan) da bitirilebilenler; boş liste = tahtadaki her özellik her çözümde gerekli
+  //                   kalmadan, kırık çatlakta durmadan) da bitirilebilenler; boş liste = tahtadaki her
+  //                   özellik her çözümde gerekli. Kara yıldız burada sayılmaz (bkz. FEATURE_BITS).
   //   minMoves        en kısa çözümün hamle sayısı
   //   solutions       birbirinden farklı çözüm (hamle dizisi) sayısı
   //   states          oyun ağacındaki farklı konum sayısı
@@ -170,33 +194,36 @@
   //   effort          ikisinden küçüğü; raw = log2(effort); rating = 1..5 (çeyrek adım)
   //   expertRaw       usta oyuncunun log2(emeği): bölümün "derin" zorluğu (blok sonu bölümleri için)
   //   used / usedCells en az bir çözümün üzerinden geçtiği kareler ve oranları
+  //   usedCracks      en az bir çözümde kırılıp sonra noktayı durduran çatlaklar
   //   loops           oklar bir hamlede noktayı aynı oka geri getiriyor mu
   function analyze(level,options={}){
     const L=compile(level);if(!L.valid)return null;
     const maxStates=options.maxStates??MAX_STATES;
     const memo=new Map();
-    const highFactor=2**Math.max(0,L.n-32),starFactor=2**L.starCount;
-    const WIN={won:true,noMoves:false,winnable:true,avoid:ALL_FEATURE_BITS,deadIn:Infinity,minMoves:0,solutions:1,chance:1,decisions:0,expertChance:1,expertDecisions:0,lines:1,depthSum:0,tries:1,work:0,usedLow:0,usedHigh:0};
+    const highFactor=2**Math.max(0,L.n-32),starFactor=2**L.starCount,keyFactor=2**L.keyCount;
+    const WIN={won:true,noMoves:false,winnable:true,avoid:ALL_FEATURE_BITS,deadIn:Infinity,minMoves:0,solutions:1,chance:1,decisions:0,expertChance:1,expertDecisions:0,lines:1,depthSum:0,tries:1,work:0,usedLow:0,usedHigh:0,usedCracks:0};
+    // Kara yıldıza değen hamlenin sonu: bölüm kaybedildi (yapacak hamlesi olmayan konum gibi).
+    const BURNED={won:false,noMoves:true,winnable:false,avoid:0,deadIn:0,minMoves:Infinity,solutions:0,chance:0,decisions:0,expertChance:0,expertDecisions:0,lines:1,depthSum:0,tries:0,work:0,usedLow:0,usedHigh:0,usedCracks:0};
     let states=0,tooBig=false,loops=false;
-    function solve(position,closedLow,closedHigh,stars,keys){
+    function solve(position,closedLow,closedHigh,stars,keys,broken){
       if(stars===0)return WIN;
-      const id=((((keys*starFactor+stars)*64+position)*highFactor+(closedHigh>>>0))*4294967296)+(closedLow>>>0);
+      const id=(((((broken*keyFactor+keys)*starFactor+stars)*64+position)*highFactor+(closedHigh>>>0))*4294967296)+(closedLow>>>0);
       let node=memo.get(id);if(node)return node;
-      node={won:false,noMoves:true,winnable:false,avoid:0,deadIn:0,minMoves:Infinity,solutions:0,chance:0,decisions:0,expertChance:0,expertDecisions:0,lines:1,depthSum:0,tries:0,work:0,usedLow:0,usedHigh:0};
+      node={won:false,noMoves:true,winnable:false,avoid:0,deadIn:0,minMoves:Infinity,solutions:0,chance:0,decisions:0,expertChance:0,expertDecisions:0,lines:1,depthSum:0,tries:0,work:0,usedLow:0,usedHigh:0,usedCracks:0};
       memo.set(id,node);
       if(++states>maxStates){tooBig=true;return node;}
       const choices=[];
       for(let direction=0;direction<4;direction++){
-        if(!slideFast(L,position,closedLow,closedHigh,stars,keys,direction))continue;
-        const collects=out.collects,passedLow=out.passedLow,passedHigh=out.passedHigh,special=out.special;
+        if(!slideFast(L,position,closedLow,closedHigh,stars,keys,direction,broken))continue;
+        const collects=out.collects,passedLow=out.passedLow,passedHigh=out.passedHigh,special=out.special,crackUse=out.crackUse;
         if(out.looped)loops=true;
-        const child=solve(out.position,out.closedLow,out.closedHigh,out.stars,out.keys);
+        const child=out.burned?BURNED:solve(out.position,out.closedLow,out.closedHigh,out.stars,out.keys,out.broken);
         if(tooBig)return node;
         node.noMoves=false;node.deadIn=Math.max(node.deadIn,child.deadIn+1);
         node.avoid|=child.avoid&~special; // avoid: hangi özellikler hiç kullanılmadan buradan kazanılabilir
         if(child.winnable){
           node.winnable=true;node.minMoves=Math.min(node.minMoves,child.minMoves+1);node.solutions+=child.solutions;
-          node.usedLow|=passedLow|child.usedLow;node.usedHigh|=passedHigh|child.usedHigh;
+          node.usedLow|=passedLow|child.usedLow;node.usedHigh|=passedHigh|child.usedHigh;node.usedCracks|=crackUse|child.usedCracks;
         }
         if(!child.noMoves)choices.push(child,collects); // sıkışılan kare aday değildir
       }
@@ -239,9 +266,9 @@
       }
       return node;
     }
-    const rootNode=solve(L.start,0,0,L.allStars,L.allKeys);
+    const rootNode=solve(L.start,0,0,L.allStars,L.allKeys,0);
     if(tooBig)return null;
-    const unneeded=Engine.featureNames.filter(name=>FEATURE_BITS[name]&L.present&rootNode.avoid);
+    const unneeded=Engine.featureNames.filter(name=>FEATURE_BITS[name]&USE_BITS&L.present&rootNode.avoid);
     const result={solvable:rootNode.winnable,unneeded,states,cells:L.n,loops,minMoves:null,solutions:0,winChance:0,
       casualEffort:Infinity,systematicEffort:Infinity,effort:Infinity,raw:null,rating:null,expertRaw:null,usedCells:0,used:null};
     if(!rootNode.winnable)return result;
@@ -254,6 +281,7 @@
     result.expertRaw=Math.log2(1+rootNode.expertDecisions/rootNode.expertChance);
     result.used=new Set(L.cells.filter((id,i)=>i===L.start||(i<32?(rootNode.usedLow>>>i)&1:(rootNode.usedHigh>>>(i-32))&1)));
     result.usedCells=result.used.size/L.n;
+    result.usedCracks=new Set(L.cells.filter((id,i)=>L.crackBit[i]&rootNode.usedCracks));
     return result;
   }
   // Bölümün yıldız puanı (1–5, çeyrek adım). Çözümsüz ya da hesaplanamayan bölümde null.

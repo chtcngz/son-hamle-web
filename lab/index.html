@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Son Hamle · Deneme Odası</title>
+  <link rel="stylesheet" href="../style.css?v=12">
+  <link rel="stylesheet" href="lab.css?v=1">
+  <script src="lab-engine.js?v=1" defer></script>
+  <script src="lab.js?v=1" defer></script>
+</head>
+<body>
+  <main class="app">
+    <header class="top">
+      <div id="difficulty" class="difficulty" role="img" aria-label="Tahmini zorluk">
+        <span class="difficulty-caption">Zorluk <strong id="difficulty-value">–/5</strong></span>
+        <span id="difficulty-stars" class="difficulty-stars" aria-hidden="true"></span>
+      </div>
+      <p class="eyebrow">SON HAMLE · DENEME ODASI</p>
+      <h1 id="level-title">Deneme Odası</h1>
+      <p id="counters"></p>
+    </header>
+    <section id="game-view" aria-label="Oyun alanı" hidden>
+      <p id="rule" class="lab-rule"></p>
+      <div id="boards" class="boards" aria-label="Tahta"></div>
+      <div id="sequence" class="sequence" hidden></div>
+      <p id="message" class="message" role="status"></p>
+      <div id="pad" class="pad" aria-label="Yön düğmeleri"></div>
+      <div class="lab-actions">
+        <button id="pocket" type="button" hidden>Duvar Koy</button>
+        <button id="play" type="button" hidden>Oynat</button>
+        <button id="restart" type="button">Yeniden Başlat</button>
+      </div>
+      <div class="vote-row" aria-label="Bu fikir hakkında">
+        <span>Bu fikir:</span>
+        <button id="vote-up" type="button" aria-pressed="false">👍 Beğendim</button>
+        <button id="vote-down" type="button" aria-pressed="false">👎 Beğenmedim</button>
+      </div>
+      <button id="next" class="primary" type="button" hidden>Sonraki Fikir</button>
+    </section>
+    <section id="levels-view" aria-label="Fikirler">
+      <p class="lab-intro">Her fikirden bir deneme bölümü. Hepsinin zorluğu, ana oyunla aynı hesapla <strong>4 yıldız</strong>. Oynadıkça her fikri 👍 ya da 👎 ile işaretle; seçimlerin aşağıda toplanır.</p>
+      <div id="idea-list" class="idea-list"></div>
+      <div id="votes" class="votes" hidden>
+        <p id="votes-text" class="votes-text"></p>
+        <button id="votes-copy" type="button">Seçimlerimi kopyala</button>
+      </div>
+      <a class="lab-link" href="../index.html">← Ana oyuna dön</a>
+    </section>
+    <button id="levels-toggle" class="outline" type="button" hidden>Fikirler</button>
+  </main>
+  <div id="result" class="result" role="dialog" aria-labelledby="result-title" hidden>
+    <button id="result-card" class="result-card" type="button">
+      <span id="result-title" class="result-title"></span>
+      <span id="result-text" class="result-text"></span>
+      <span id="result-action" class="result-action"></span>
+    </button>
+  </div>
+</body>
+</html>
