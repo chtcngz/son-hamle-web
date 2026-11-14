@@ -42,4 +42,13 @@ button{font:inherit;cursor:pointer}
 .level-grid button{border:1px solid #53718d;border-radius:7px;background:#19324e;color:#fff;min-height:47px}
 .level-grid button.current{border-color:#e4a325}.level-grid button.complete{background:#25584e}.level-grid button:disabled{opacity:.4;cursor:not-allowed}
 #back{width:min(100%,510px)}
+.result{position:fixed;top:0;right:0;bottom:0;left:0;z-index:5;display:grid;place-items:center;padding:20px;background:rgba(4,10,20,.62);animation:result-in .2s ease-out .35s both}
+.result-card{display:grid;justify-items:center;gap:6px;width:min(100%,310px);padding:24px 20px 20px;border:2px solid #e4a325;border-radius:18px;background:#12284a;color:#fff;text-align:center;box-shadow:0 18px 48px rgba(0,0,0,.55)}
+.result-card:active{transform:scale(.98)}.result-card:focus-visible{outline:2px solid #fff;outline-offset:3px}
+.result-title{font-size:1.8rem;font-weight:800;line-height:1.1}
+.result-text{color:#c6d8e6;font-size:.98rem}
+.result-action{width:100%;margin-top:12px;padding:13px 14px;border-radius:10px;background:#e4a325;color:#162235;font-weight:700}
+.result.lost .result-card{border-color:#d5694a}.result.lost .result-title{color:#ffb7a3}.result.lost .result-action{background:#d5694a;color:#fff}
+@keyframes result-in{from{visibility:hidden;opacity:0}to{visibility:visible;opacity:1}}
+@media(prefers-reduced-motion:reduce){.result{animation-duration:.01s}}
 @media(max-height:700px){.app{gap:8px;padding-top:10px}.board{width:min(100%,48vh)}.message{min-height:1.7em}}
