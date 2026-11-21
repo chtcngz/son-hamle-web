@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex,nofollow">
+<title>Son Hamle</title>
+<style>
+:root{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:#f6f9fc;background:#091423}
+body{margin:0;min-height:100vh}
+.gate{min-height:100vh;display:grid;place-items:center;padding:24px;text-align:center;box-sizing:border-box}
+.gate h1{margin:0 0 10px;font-size:1.8rem}
+.gate p{margin:0 auto;color:#b9cddd;max-width:30ch;line-height:1.5}
+</style>
+</head>
+<body>
+<main class="gate"><div><h1>Son Hamle</h1><p id="gate-text">Yükleniyor…</p></div></main>
+<script>
+(async()=>{
+  const PAGE="lab/",BASE=PAGE?"../":"",STORE="sonhamle-davet";
+  // Kilitliyken adrese bağlantı yapıştırılırsa (yalnız # kısmı değişir, sayfa yenilenmez) sayfa yeniden açılır.
+  const say=text=>{document.getElementById("gate-text").textContent=text;addEventListener("hashchange",()=>location.reload());};
+  let key=new URLSearchParams(location.hash.slice(1)).get("k");
+  if(key){
+    let kept=false;try{localStorage.setItem(STORE,key);kept=true;}catch{}
+    if(kept)history.replaceState(null,"",location.pathname+location.search); // bağlantı adres çubuğunda kalmasın
+  }else{try{key=localStorage.getItem(STORE);}catch{}}
+  if(!key)return say("Bu oyun şimdilik yalnızca davetle oynanıyor. Sana gönderilen bağlantıyı aç.");
+  let files;
+  try{
+    const bytes=new Uint8Array(await (await fetch(BASE+"game.bin",{cache:"no-cache"})).arrayBuffer());
+    const b64=key.replace(/-/g,"+").replace(/_/g,"/"),raw=Uint8Array.from(atob(b64+"===".slice((b64.length+3)%4)),c=>c.charCodeAt(0));
+    const cryptoKey=await crypto.subtle.importKey("raw",raw,"AES-GCM",false,["decrypt"]);
+    files=JSON.parse(new TextDecoder().decode(await crypto.subtle.decrypt({name:"AES-GCM",iv:bytes.slice(0,12)},cryptoKey,bytes.slice(12))));
+  }catch{
+    try{localStorage.removeItem(STORE);}catch{}
+    return say("Bu bağlantı geçersiz ya da eskimiş. Yeni bağlantıyı iste.");
+  }
+  const TYPES={js:"text/javascript",css:"text/css",json:"application/json",html:"text/html"};
+  const typeOf=name=>TYPES[name.split(".").pop()]??"text/plain";
+  // Sayfaya göre adres → paketteki dosya ("../style.css?v=15" deneme odasında → "style.css").
+  const resolve=href=>{const out=[];for(const part of (PAGE+href.split(/[?#]/)[0]).split("/")){if(part==="..")out.pop();else if(part&&part!==".")out.push(part);}return out.join("/");};
+  const urls={},urlOf=name=>urls[name]??=URL.createObjectURL(new Blob([files[name]],{type:typeOf(name)}));
+  const realFetch=window.fetch.bind(window);
+  window.fetch=(input,init)=>{
+    const name=typeof input==="string"&&!/^[a-z]+:/i.test(input)?resolve(input):null;
+    return name&&name in files?Promise.resolve(new Response(files[name],{headers:{"content-type":typeOf(name)}})):realFetch(input,init);
+  };
+  const doc=new DOMParser().parseFromString(files[PAGE+"index.html"],"text/html");
+  document.title=doc.title;
+  const sheets=[...doc.querySelectorAll('link[rel="stylesheet"]')].map(link=>new Promise(done=>{
+    const el=document.createElement("link");el.rel="stylesheet";el.onload=el.onerror=done;el.href=urlOf(resolve(link.getAttribute("href")));document.head.append(el);
+  }));
+  await Promise.all(sheets);
+  document.querySelector("style").remove();
+  document.body.replaceChildren(...[...doc.body.childNodes].map(node=>document.importNode(node,true)));
+  for(const script of doc.querySelectorAll("script[src]"))await new Promise((done,fail)=>{
+    const el=document.createElement("script");el.onload=done;el.onerror=fail;el.src=urlOf(resolve(script.getAttribute("src")));document.body.append(el);
+  });
+})();
+</script>
+</body>
+</html>
